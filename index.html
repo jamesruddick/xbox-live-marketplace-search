@@ -34,11 +34,24 @@
       <div class="top-inner">
         <div class="brand-row">
           <h1 class="brand"><a href="./">Xbox Live Marketplace <span>Search</span></a></h1>
-          <label class="locale">
-            <svg class="icon" aria-hidden="true"><use href="#i-globe"/></svg>
-            <span class="sr-only">Marketplace locale</span>
-            <select id="locale-select"></select>
-          </label>
+          <div class="locale">
+            <select id="locale-select" hidden tabindex="-1" aria-hidden="true"></select>
+            <div class="dropdown">
+              <button id="locale-trigger" type="button" class="dropdown-trigger locale-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="locale-menu" disabled>
+                <svg class="icon" aria-hidden="true"><use href="#i-globe"/></svg>
+                <span id="locale-value" class="dropdown-value">en-us</span>
+                <svg class="icon dropdown-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+              </button>
+              <div id="locale-menu" class="dropdown-menu locale-menu" hidden>
+                <div id="locale-filter-wrap" class="locale-filter">
+                  <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+                  <input id="locale-filter" type="text" role="combobox" placeholder="Search locales" aria-label="Search locales" aria-expanded="true" aria-controls="locale-list" aria-autocomplete="list" autocomplete="off" spellcheck="false">
+                </div>
+                <div id="locale-list" class="locale-list" role="listbox" aria-label="Marketplace locale" tabindex="-1"></div>
+                <p id="locale-count" class="locale-count"></p>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="search">
           <svg class="icon search-icon" aria-hidden="true"><use href="#i-search"/></svg>

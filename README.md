@@ -18,13 +18,10 @@ git submodule update --init
 ```
 
 ### Run It Locally
-The page loads the archive with `fetch`, so it needs to be served over HTTP rather than opened as a file. From the repository root:
+The page loads the archive with `fetch`, which browsers block for pages opened straight from disk, so serve it over HTTP. From the repository root (requires [Node.js](https://nodejs.org)):
 
 ```bash
-python3 -m http.server 8000
+npx serve
 ```
 
-Then open [http://localhost:8000](http://localhost:8000). Any static file server works (for example `npx serve`).
-
-### Adding a Locale
-When a new locale lands in the archive (`xbox-live-marketplace.<locale>.csv` plus its `xbox-live-marketplace.<locale>/` folder), add its code to the `LOCALES` list at the top of `index.js`. It then appears in the locale picker; `en-us` stays the default, and a locale can be linked directly with `?locale=<code>`.
+Then open [http://localhost:3000](http://localhost:3000).

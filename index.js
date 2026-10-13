@@ -1,10 +1,39 @@
 const ARCHIVE = 'xbox-live-marketplace-archive';
 const PAGE_SIZE = 100;
 
-// Locales available in the archive. Add a code here when its CSV index and XML folder land
-// in the archive (xbox-live-marketplace.<code>.csv and xbox-live-marketplace.<code>/).
-const LOCALES = ['en-us'];
 const DEFAULT_LOCALE = 'en-us';
+
+// Every locale the Xbox 360 marketplace served. A static site can't list a folder, so the first time
+// the locale menu opens the page checks which of these have an index in the archive, and remembers
+// the answer for a day.
+const KNOWN_LOCALES = [
+	'am-et', 'ar-ae', 'ar-bh', 'ar-dz', 'ar-eg', 'ar-iq', 'ar-jo', 'ar-kw', 'ar-lb', 'ar-ly', 'ar-ma',
+	'ar-om', 'ar-qa', 'ar-sa', 'ar-tn', 'ar-ye', 'be-by', 'bg-bg', 'bn-bd', 'cs-cz', 'da-dk', 'de-at',
+	'de-ch', 'de-de', 'de-li', 'el-gr', 'en-ag', 'en-ai', 'en-ao', 'en-au', 'en-aw', 'en-az', 'en-ba',
+	'en-bb', 'en-bf', 'en-bi', 'en-bj', 'en-bm', 'en-bs', 'en-bt', 'en-bw', 'en-bz', 'en-ca', 'en-cc',
+	'en-cf', 'en-ck', 'en-cv', 'en-cx', 'en-cy', 'en-dj', 'en-eh', 'en-er', 'en-fj', 'en-fk', 'en-fm',
+	'en-gb', 'en-gd', 'en-gg', 'en-gh', 'en-gi', 'en-gm', 'en-gn', 'en-gq', 'en-gw', 'en-gy', 'en-hk',
+	'en-ie', 'en-in', 'en-je', 'en-jm', 'en-ki', 'en-kn', 'en-ky', 'en-la', 'en-lc', 'en-lr', 'en-ls',
+	'en-md', 'en-me', 'en-mh', 'en-ml', 'en-mm', 'en-mo', 'en-mr', 'en-ms', 'en-mv', 'en-mw', 'en-mz',
+	'en-na', 'en-ne', 'en-nf', 'en-ng', 'en-nr', 'en-nu', 'en-nz', 'en-pg', 'en-ph', 'en-pn', 'en-ps',
+	'en-pw', 'en-re', 'en-rs', 'en-sb', 'en-sc', 'en-sg', 'en-sh', 'en-sl', 'en-sm', 'en-so', 'en-sr',
+	'en-st', 'en-sz', 'en-tc', 'en-td', 'en-tj', 'en-tk', 'en-tl', 'en-to', 'en-tt', 'en-tv', 'en-tz',
+	'en-ug', 'en-us', 'en-uz', 'en-va', 'en-vc', 'en-vg', 'en-vu', 'en-ws', 'en-za', 'en-zm', 'en-zw',
+	'es-ar', 'es-bo', 'es-cl', 'es-co', 'es-cr', 'es-dm', 'es-do', 'es-ec', 'es-es', 'es-gt', 'es-hn',
+	'es-mx', 'es-ni', 'es-pa', 'es-pe', 'es-py', 'es-sv', 'es-uy', 'es-ve', 'et-ee', 'fa-ir', 'fi-fi',
+	'fo-fo', 'fr-ad', 'fr-be', 'fr-ca', 'fr-cd', 'fr-cg', 'fr-ch', 'fr-ci', 'fr-cm', 'fr-fr', 'fr-ga',
+	'fr-gf', 'fr-gp', 'fr-ht', 'fr-km', 'fr-mc', 'fr-mg', 'fr-mq', 'fr-mu', 'fr-nc', 'fr-pf', 'fr-pm',
+	'fr-tg', 'fr-wf', 'fr-yt', 'he-il', 'hi-in', 'hr-hr', 'hu-hu', 'hy-am', 'id-id', 'is-is', 'it-ch',
+	'it-it', 'ja-jp', 'ka-ge', 'kk-kz', 'kl-gl', 'km-kh', 'ko-kr', 'ky-kg', 'lb-lu', 'lt-lt', 'lv-lv',
+	'mk-mk', 'mn-mn', 'ms-bn', 'ms-my', 'mt-mt', 'nb-no', 'ne-np', 'nl-be', 'nl-nl', 'pl-pl', 'ps-af',
+	'pt-br', 'pt-pt', 'ro-ro', 'ru-ru', 'rw-rw', 'si-lk', 'sk-sk', 'sl-si', 'sq-al', 'sv-fi', 'sv-se',
+	'sw-ke', 'th-th', 'tk-tm', 'tr-tr', 'uk-ua', 'ur-pk', 'vi-vn', 'wo-sn', 'zh-cn', 'zh-hk', 'zh-tw',
+];
+let locales = [DEFAULT_LOCALE];
+let localesKnown = false;
+let localeDiscovery = null;
+const LOCALE_CACHE_KEY = 'xlm-search:locales';
+const LOCALE_CACHE_MS = 24 * 60 * 60 * 1000;
 
 const state = { locale: DEFAULT_LOCALE, query: '', type: '', sort: 'title', page: 1, item: '', offerOnly: false };
 
@@ -12,6 +41,16 @@ const indexUrl = locale => `${ARCHIVE}/xbox-live-marketplace.${locale}.csv`;
 const recordUrl = id => `${ARCHIVE}/xbox-live-marketplace.${state.locale}/${id}.xml`;
 
 const languageNames = new Intl.DisplayNames(['en'], { type: 'language', languageDisplay: 'standard', style: 'short' });
+const languageNamesLong = new Intl.DisplayNames(['en'], { type: 'language', languageDisplay: 'standard' });
+function localeLongName(code) {
+	const [language, region] = code.split('-');
+	try {
+		return languageNamesLong.of(region ? `${language}-${region.toUpperCase()}` : language);
+	} catch {
+		return code;
+	}
+}
+
 function localeName(code) {
 	const [language, region] = code.split('-');
 	const tag = region ? `${language}-${region.toUpperCase()}` : language;
@@ -46,6 +85,13 @@ const els = {
 	filters: $('type-filters'),
 	sort: $('sort-select'),
 	offerToggle: $('offer-toggle'),
+	localeTrigger: $('locale-trigger'),
+	localeValue: $('locale-value'),
+	localeMenu: $('locale-menu'),
+	localeFilter: $('locale-filter'),
+	localeFilterWrap: $('locale-filter-wrap'),
+	localeList: $('locale-list'),
+	localeCount: $('locale-count'),
 	sortTrigger: $('sort-trigger'),
 	sortValue: $('sort-trigger-text'),
 	sortMenu: $('sort-menu'),
@@ -304,7 +350,7 @@ function renderResults(terms) {
 	els.status.hidden = true;
 	els.table.hidden = false;
 	els.count.innerHTML = results.length === items.length
-		? `<strong>${fmt.format(results.length)}</strong> items<span class="wide-only"> in the archive</span>`
+		? `<strong>${fmt.format(results.length)}</strong> ${results.length === 1 ? 'item' : 'items'}<span class="wide-only"> in the archive</span>`
 		: `<strong>${fmt.format(results.length)}</strong> ${results.length === 1 ? 'item' : 'items'} of ${fmt.format(items.length)}`;
 
 	els.body.replaceChildren(...slice.map(item => {
@@ -782,7 +828,7 @@ function closeDetail({ fromHistory = false } = {}) {
 function readUrl() {
 	const params = new URLSearchParams(location.search);
 	const locale = (params.get('locale') ?? '').toLowerCase();
-	state.locale = LOCALES.includes(locale) ? locale : DEFAULT_LOCALE;
+	state.locale = KNOWN_LOCALES.includes(locale) ? locale : DEFAULT_LOCALE;
 	state.query = params.get('q') ?? '';
 	state.type = TYPE_BY_ID[params.get('type')] ? params.get('type') : '';
 	state.sort = [...els.sort.options].some(o => o.value === params.get('sort')) ? params.get('sort') : 'title';
@@ -936,6 +982,7 @@ function setSortActive(index) {
 
 function openSortMenu() {
 	if (els.sortTrigger.disabled || !els.sortMenu.hidden) return;
+	closeLocaleMenu({ focusTrigger: false });
 	els.sortMenu.hidden = false;
 	els.sortTrigger.setAttribute('aria-expanded', 'true');
 	// Open upwards if there isn't room below.
@@ -1002,9 +1049,25 @@ els.sortMenu.addEventListener('mousemove', event => {
 	const li = event.target.closest('[role="option"]');
 	if (li && Number(li.dataset.index) !== sortActive) setSortActive(Number(li.dataset.index));
 });
+// A tap outside an open menu only closes it, like a native menu; it must not also press whatever is underneath.
+let swallowClick = false;
 document.addEventListener('pointerdown', event => {
-	if (!els.sortMenu.hidden && !event.target.closest('.dropdown')) closeSortMenu({ focusTrigger: false });
+	swallowClick = false;
+	if (!els.sortMenu.hidden && !event.target.closest('#sort-menu, #sort-trigger')) {
+		closeSortMenu({ focusTrigger: false });
+		swallowClick = true;
+	}
+	if (!els.localeMenu.hidden && !event.target.closest('#locale-menu, #locale-trigger')) {
+		closeLocaleMenu({ focusTrigger: false });
+		swallowClick = true;
+	}
 });
+document.addEventListener('click', event => {
+	if (!swallowClick) return;
+	swallowClick = false;
+	event.preventDefault();
+	event.stopPropagation();
+}, true);
 
 els.sort.addEventListener('change', () => {
 	state.sort = els.sort.value;
@@ -1235,7 +1298,7 @@ let loadToken = 0;
 async function loadLocale({ openItem = '', focus = false } = {}) {
 	const locale = state.locale;
 	const token = ++loadToken;
-	els.locale.value = locale;
+	renderLocales();
 	els.footCsv.href = indexUrl(locale);
 	els.footCsv.download = indexUrl(locale).split('/').pop();
 	document.documentElement.dataset.locale = locale;
@@ -1244,6 +1307,7 @@ async function loadLocale({ openItem = '', focus = false } = {}) {
 		els.search.disabled = true;
 		els.sort.disabled = true;
 		els.sortTrigger.disabled = true;
+		els.localeTrigger.disabled = true;
 		els.offerToggle.disabled = true;
 		els.table.hidden = true;
 		els.pager.hidden = true;
@@ -1266,6 +1330,7 @@ async function loadLocale({ openItem = '', focus = false } = {}) {
 		} catch (error) {
 			if (token !== loadToken) return;
 			els.count.textContent = '';
+			els.localeTrigger.disabled = false;
 			showStatus('error', error.missing ? error.message : `${error.message || 'The download failed.'} Check your connection and try again.`, locale);
 			return;
 		}
@@ -1275,6 +1340,7 @@ async function loadLocale({ openItem = '', focus = false } = {}) {
 	els.search.disabled = false;
 	els.sort.disabled = false;
 	els.sortTrigger.disabled = false;
+	els.localeTrigger.disabled = false;
 	els.offerToggle.disabled = false;
 	update({ resetPage: false });
 	if (openItem && byId.has(openItem)) openDetail(openItem, { push: false });
@@ -1290,17 +1356,200 @@ els.locale.addEventListener('change', () => {
 	loadLocale();
 });
 
-(function start() {
-	// Phones show just the locale code so the title keeps its room; wider screens show the full name.
-	const compact = matchMedia('(max-width: 720px)');
-	const labelLocales = () => {
-		for (const option of els.locale.options) option.textContent = compact.matches ? option.value : localeName(option.value);
-	};
-	els.locale.replaceChildren(...LOCALES.map(code => el('option', { value: code, title: localeName(code) }, code)));
+/* ---------- Locale dropdown ---------- */
+
+// Phones show just the locale code so the title keeps its room; wider screens show the full name.
+const compactLocales = matchMedia('(max-width: 720px)');
+function labelLocales() {
+	els.localeValue.textContent = compactLocales.matches ? state.locale : localeName(state.locale);
+	els.localeTrigger.title = localeLongName(state.locale);
+	els.localeTrigger.setAttribute('aria-label', `Marketplace locale: ${localeLongName(state.locale)}`);
+}
+compactLocales.addEventListener('change', labelLocales);
+
+const localeCodes = () => (locales.includes(state.locale) ? locales : [...locales, state.locale]);
+
+function renderLocales() {
+	const codes = localeCodes();
+	els.locale.replaceChildren(...codes.map(code => el('option', { value: code }, code)));
+	els.locale.value = state.locale;
 	labelLocales();
-	compact.addEventListener('change', labelLocales);
-	els.locale.disabled = LOCALES.length < 2;
+	// The search box only earns its place once the list is long.
+	els.localeFilterWrap.hidden = codes.length <= 8;
+	if (!els.localeMenu.hidden) renderLocaleList();
+}
+
+let localeMatches = [];
+let localeActive = 0;
+
+function renderLocaleList() {
+	const query = els.localeFilter.value.trim().toLowerCase();
+	const codes = localeCodes();
+	localeMatches = codes.filter(code => !query || code.includes(query) || localeLongName(code).toLowerCase().includes(query));
+	const nodes = [];
+	localeMatches.forEach((code, i) => {
+		if (!query && i === 1 && localeMatches[0] === DEFAULT_LOCALE) {
+			const sep = el('div', { className: 'dropdown-sep' });
+			sep.setAttribute('aria-hidden', 'true');
+			nodes.push(sep);
+		}
+		const option = el('div', { id: `locale-opt-${i}`, className: 'dropdown-option locale-option' },
+			el('span', { className: 'locale-names' }, el('span', {}, localeLongName(code)), el('span', { className: 'locale-code' }, code)),
+			icon('check'),
+		);
+		option.setAttribute('role', 'option');
+		option.setAttribute('aria-selected', String(code === state.locale));
+		option.dataset.index = i;
+		nodes.push(option);
+	});
+	if (!localeMatches.length) nodes.push(el('p', { className: 'locale-empty' }, 'No archived locale matches'));
+	els.localeList.replaceChildren(...nodes);
+	els.localeList.setAttribute('aria-busy', String(!localesKnown));
+	els.localeCount.textContent = !localesKnown
+		? 'Checking the archive…'
+		: query
+		? `${fmt.format(localeMatches.length)} of ${fmt.format(codes.length)} locales`
+		: `${fmt.format(codes.length)} ${codes.length === 1 ? 'locale' : 'locales'} in the archive`;
+	const current = localeMatches.indexOf(state.locale);
+	setLocaleActive(query || current === -1 ? 0 : current);
+}
+
+function setLocaleActive(index) {
+	if (!localeMatches.length) {
+		els.localeFilter.removeAttribute('aria-activedescendant');
+		return;
+	}
+	localeActive = (index + localeMatches.length) % localeMatches.length;
+	for (const option of els.localeList.querySelectorAll('[role="option"]')) {
+		const active = Number(option.dataset.index) === localeActive;
+		option.classList.toggle('is-active', active);
+		if (active) option.scrollIntoView({ block: 'nearest' });
+	}
+	els.localeFilter.setAttribute('aria-activedescendant', `locale-opt-${localeActive}`);
+	els.localeList.setAttribute('aria-activedescendant', `locale-opt-${localeActive}`);
+}
+
+function openLocaleMenu() {
+	if (els.localeTrigger.disabled || !els.localeMenu.hidden) return;
+	discoverLocales();
+	closeSortMenu({ focusTrigger: false });
+	els.localeFilter.value = '';
+	els.localeMenu.hidden = false;
+	els.localeTrigger.setAttribute('aria-expanded', 'true');
+	renderLocaleList();
+	requestAnimationFrame(() => els.localeMenu.classList.add('is-open'));
+	(els.localeFilterWrap.hidden ? els.localeList : els.localeFilter).focus({ preventScroll: true });
+}
+
+function closeLocaleMenu({ focusTrigger = true } = {}) {
+	if (els.localeMenu.hidden) return;
+	els.localeMenu.classList.remove('is-open');
+	els.localeMenu.hidden = true;
+	els.localeTrigger.setAttribute('aria-expanded', 'false');
+	if (focusTrigger) els.localeTrigger.focus({ preventScroll: true });
+}
+
+function chooseLocale(index) {
+	const code = localeMatches[index];
+	closeLocaleMenu();
+	if (!code || code === state.locale) return;
+	els.locale.value = code;
+	els.locale.dispatchEvent(new Event('change'));
+}
+
+els.localeTrigger.addEventListener('click', () => (els.localeMenu.hidden ? openLocaleMenu() : closeLocaleMenu()));
+els.localeTrigger.addEventListener('keydown', event => {
+	if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) {
+		event.preventDefault();
+		openLocaleMenu();
+	}
+});
+els.localeFilter.addEventListener('input', renderLocaleList);
+els.localeMenu.addEventListener('keydown', event => {
+	const page = 6;
+	const keys = {
+		ArrowDown: () => setLocaleActive(localeActive + 1),
+		ArrowUp: () => setLocaleActive(localeActive - 1),
+		PageDown: () => setLocaleActive(Math.min(localeMatches.length - 1, localeActive + page)),
+		PageUp: () => setLocaleActive(Math.max(0, localeActive - page)),
+		Enter: () => chooseLocale(localeActive),
+		Escape: () => closeLocaleMenu(),
+		Tab: () => closeLocaleMenu({ focusTrigger: false }),
+	};
+	// Home/End and Space belong to the search box while typing; outside it they move or choose.
+	if (event.target !== els.localeFilter) {
+		keys.Home = () => setLocaleActive(0);
+		keys.End = () => setLocaleActive(localeMatches.length - 1);
+		keys[' '] = () => chooseLocale(localeActive);
+	}
+	if (!keys[event.key]) return;
+	if (event.key !== 'Tab') event.preventDefault();
+	event.stopPropagation(); // keep Escape and the arrows from reaching page-level handlers
+	keys[event.key]();
+});
+els.localeList.addEventListener('click', event => {
+	const option = event.target.closest('[role="option"]');
+	if (option) chooseLocale(Number(option.dataset.index));
+});
+els.localeList.addEventListener('mousemove', event => {
+	const option = event.target.closest('[role="option"]');
+	if (option && Number(option.dataset.index) !== localeActive) setLocaleActive(Number(option.dataset.index));
+});
+
+// Use a remembered result from the last day, if the browser kept one.
+function restoreLocales() {
+	try {
+		const saved = JSON.parse(localStorage.getItem(LOCALE_CACHE_KEY));
+		if (!saved || Date.now() - saved.at > LOCALE_CACHE_MS || !Array.isArray(saved.codes)) return;
+		const codes = saved.codes.filter(code => KNOWN_LOCALES.includes(code) && code !== DEFAULT_LOCALE);
+		locales = [DEFAULT_LOCALE, ...codes];
+		localesKnown = true;
+	} catch {
+		// Storage unavailable or unreadable: check again when the menu opens.
+	}
+}
+
+function rememberLocales(codes) {
+	try {
+		localStorage.setItem(LOCALE_CACHE_KEY, JSON.stringify({ at: Date.now(), codes }));
+	} catch {
+		// Storage unavailable: the next visit simply checks again.
+	}
+}
+
+// Runs once per page (and only when needed). Checks a few locales at a time so the page's own
+// requests, such as item records, aren't queued behind them.
+function discoverLocales() {
+	if (localesKnown || localeDiscovery) return localeDiscovery;
+	localeDiscovery = checkArchiveLocales();
+	return localeDiscovery;
+}
+
+async function checkArchiveLocales() {
+	const queue = KNOWN_LOCALES.filter(code => code !== DEFAULT_LOCALE);
+	const found = [];
+	const worker = async () => {
+		for (let code = queue.shift(); code; code = queue.shift()) {
+			try {
+				const response = await fetch(indexUrl(code), { method: 'HEAD' });
+				if (response.ok) found.push(code);
+			} catch {
+				// Unreachable counts as missing.
+			}
+		}
+	};
+	await Promise.all(Array.from({ length: 8 }, worker));
+	const others = found.sort((a, b) => localeLongName(a).localeCompare(localeLongName(b)));
+	locales = [DEFAULT_LOCALE, ...others];
+	localesKnown = true;
+	rememberLocales(others);
+	renderLocales();
+}
+
+(function start() {
 	readUrl();
+	restoreLocales();
+	renderLocales();
 	setQuery(state.query);
 	els.sort.value = state.sort;
 	els.offerToggle.checked = state.offerOnly;
