@@ -2,57 +2,174 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#0f1115">
+    <meta name="description" content="Search the Xbox Live Marketplace Archive: 72,000+ Xbox 360 marketplace records by name, Title ID, Offer ID, or Content ID.">
     <title>Xbox Live Marketplace Search</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.8/css/bootstrap.min.css" integrity="sha512-2bBQCjcnw658Lho4nlXJcc6WkV/UxpE/sAokbXPxQNGqmNdQrWqtw26Ns9kFF/yG792pKR1Sx8/Y1Lf1XN4GKA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
-    <style>
-      table {
-        font-family: 'Courier New', monospace;
-        word-break: break-all;
-      }
-      table th {
-        min-width: 12ch;
-      }
-      table th:nth-child(2) {
-        min-width: 6ch;
-      }
-    </style>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f1115'/%3E%3Ccircle cx='14' cy='14' r='7' fill='none' stroke='%2352c23a' stroke-width='3'/%3E%3Cpath d='M19 19l6 6' stroke='%2352c23a' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="style.css">
   </head>
-  <body class="bg-black">
-    <div class="container-fluid">
-      <h1 class="text-center mb-4 text-light">Xbox Live Marketplace Search</h1>
-      <div class="row mb-4 justify-content-center align-items-center">
-          <div class="col-auto">
-            <select id="type-dropdown" class="form-select custom-select-width">
-              <option value="0">Select Type</option>
-              <option value="1">(01) Games</option>
-              <option value="5">(05) Game Trials</option>
-              <option value="18">(18) Game Add-ons</option>
-              <option value="19">(19) Game Demos</option>
-              <option value="20">(20) Themes</option>
-              <option value="21">(21) Original Xbox Games</option>
-              <option value="22">(22) Gamer Pictures</option>
-              <option value="23">(23) Arcade Games</option>
-              <option value="37">(37) Indie Games</option>
-              <option value="47">(47) Avatar Items</option>
-            </select>
-          </div>
-          <div class="col-lg-4 col-md-6 col-sm-8 mt-3 mt-md-0">
-            <input id="search-input" class="form-control" type="text" placeholder="Search...">
-          </div>
+  <body>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+      <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+      <symbol id="i-sort" viewBox="0 0 24 24"><path d="m8 9 4-4 4 4M8 15l4 4 4-4"/></symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 2.8l2.83 5.73 6.32.92-4.57 4.46 1.08 6.3L12 17.24l-5.66 2.97 1.08-6.3-4.57-4.46 6.32-.92z"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+    </svg>
+
+    <div id="page" class="page">
+    <!-- Header and results share a wrapper so the pinned header lets go where the results end. -->
+    <div class="page-body">
+    <header class="top">
+      <div class="top-inner">
+        <div class="brand-row">
+          <h1 class="brand"><a href="./">Xbox Live Marketplace <span>Search</span></a></h1>
+          <label class="locale">
+            <svg class="icon" aria-hidden="true"><use href="#i-globe"/></svg>
+            <span class="sr-only">Marketplace locale</span>
+            <select id="locale-select"></select>
+          </label>
+        </div>
+        <div class="search">
+          <svg class="icon search-icon" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="search-input" type="search" placeholder="Search Titles or IDs" autocomplete="off" spellcheck="false" aria-label="Search the archive" disabled>
+          <button id="search-clear" class="search-clear" type="button" aria-label="Clear search" hidden>
+            <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
+          </button>
+          <kbd class="search-key" aria-hidden="true">/</kbd>
+        </div>
       </div>
-      <div class="pagination-controls pagination justify-content-center mb-3"></div>
-      <div class="table-responsive">
-        <table class="table table-striped table-hover table-dark">
-          <thead id="table-head"></thead>
-          <tbody id="table-body"></tbody>
-        </table>
+    </header>
+
+    <noscript><p class="noscript">This search runs in your browser and needs JavaScript. The raw data is in the <a href="https://github.com/jamesruddick/xbox-live-marketplace-archive">archive repository</a>.</p></noscript>
+
+    <main class="results">
+      <div class="filters-wrap">
+        <div id="type-filters" class="filters" role="radiogroup" aria-label="Product type"></div>
       </div>
-      <div class="pagination-controls pagination justify-content-center mt-3 mb-4"></div>
+      <div class="toolbar">
+        <p id="result-count" class="count" aria-live="polite">Loading the archive index…</p>
+        <div class="toolbar-controls">
+        <label class="toggle">
+          <input id="offer-toggle" type="checkbox" disabled>
+          <span class="toggle-track" aria-hidden="true"></span>
+          <span class="toggle-label"><span class="wide-label">Only with Offer ID</span><span class="narrow-label">Offer ID only</span></span>
+        </label>
+        <div class="sort">
+          <span id="sort-label" class="sort-label">Sort</span>
+          <!-- The native select holds the value (URL, history, column headers); the dropdown below is its face. -->
+          <select id="sort-select" hidden disabled tabindex="-1" aria-hidden="true">
+            <option value="title">A–Z</option>
+            <option value="-title">Z–A</option>
+            <option value="-updated">Newest</option>
+            <option value="updated">Oldest</option>
+            <option value="type">Type</option>
+          </select>
+          <div class="dropdown">
+            <button id="sort-trigger" type="button" class="dropdown-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="sort-menu" aria-labelledby="sort-label sort-trigger-text" disabled>
+              <svg class="icon" aria-hidden="true"><use href="#i-sort"/></svg>
+              <span id="sort-trigger-text" class="dropdown-value">A–Z</span>
+              <svg class="icon dropdown-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+            </button>
+            <div id="sort-menu" class="dropdown-menu" role="listbox" aria-labelledby="sort-label" tabindex="-1" hidden></div>
+          </div>
+        </div>
+        </div>
+      </div>
+
+      <div id="status" class="status" role="status">
+        <div class="progress"><span id="progress-bar"></span></div>
+        <p id="status-text">Downloading the archive index…</p>
+      </div>
+
+      <table id="results-table" class="table" hidden>
+        <thead>
+          <tr>
+            <th scope="col" class="c-title"><button type="button" class="th-sort" data-sort="title">Title<svg class="icon" aria-hidden="true"><use href="#i-sort"/></svg></button></th>
+            <th scope="col" class="c-type"><button type="button" class="th-sort" data-sort="type">Type<svg class="icon" aria-hidden="true"><use href="#i-sort"/></svg></button></th>
+            <th scope="col" class="c-id">Title ID</th>
+            <th scope="col" class="c-id c-offer">Offer ID</th>
+            <th scope="col" class="c-id c-content">Content ID</th>
+            <th scope="col" class="c-date"><button type="button" class="th-sort" data-sort="updated">Updated<svg class="icon" aria-hidden="true"><use href="#i-sort"/></svg></button></th>
+          </tr>
+        </thead>
+        <tbody id="results-body"></tbody>
+      </table>
+
+      <nav id="pager" class="pager" aria-label="Pages" hidden>
+        <button id="page-prev" type="button" class="btn" aria-label="Previous page"><svg class="icon" aria-hidden="true"><use href="#i-left"/></svg><span class="btn-label">Previous</span></button>
+        <span id="page-info" class="page-info"></span>
+        <button id="page-next" type="button" class="btn" aria-label="Next page"><span class="btn-label">Next</span><svg class="icon" aria-hidden="true"><use href="#i-right"/></svg></button>
+      </nav>
+    </main>
+
     </div>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.8/js/bootstrap.bundle.min.js" integrity="sha512-HvOjJrdwNpDbkGJIG2ZNqDlVqMo77qbs4Me4cah0HoDrfhrbA+8SBlZn1KrvAQw7cILLPFJvdwIgphzQmMm+Pw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js" integrity="sha512-v2CJ7UaYy4JwqLDIrZUI/4hqeoQieOmAZNXBeQyjo21dadnwR+8ZaIJVT8EE2iyI61OV8e6M8PP2/4hpQINQ/g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js" integrity="sha512-dfX5uYVXzyU8+KHqj8bjo7UkOdg18PaOtpa48djpNbZHwExddghZ+ZmzWT06R5v6NSk3ZUfsH6FNEDepLx9hPQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <footer class="foot">
+      <div class="foot-inner">
+        <div class="foot-main">
+          <div>
+            <p class="foot-name">Xbox Live Marketplace <span>Search</span></p>
+            <p class="foot-desc">A searchable index of the Xbox 360 marketplace, built on the community-maintained Xbox Live Marketplace Archive. Every record links back to its original XML.</p>
+          </div>
+          <nav class="foot-links" aria-label="Project links">
+            <div>
+              <h2>Project</h2>
+              <ul>
+                <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-archive">Archive repository</a></li>
+                <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-search">Search source code</a></li>
+                <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-search/issues">Report an issue</a></li>
+              </ul>
+            </div>
+            <div>
+              <h2>Data</h2>
+              <ul>
+                <li><a id="foot-csv" href="xbox-live-marketplace-archive/xbox-live-marketplace.en-us.csv" download>Download the CSV index</a></li>
+                <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-archive#-archive-structure">How the archive is organised</a></li>
+                <li><a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 public domain dedication</a></li>
+              </ul>
+            </div>
+          </nav>
+        </div>
+        <div class="foot-legal">
+          <p>A non-commercial community preservation project. Not affiliated with or endorsed by Microsoft. Xbox, Xbox 360 and Xbox Live are trademarks of the Microsoft group of companies; product names belong to their respective owners.</p>
+          <p><a href="https://github.com/jamesruddick/xbox-live-marketplace-archive/issues">Takedown requests</a></p>
+        </div>
+      </div>
+    </footer>
+    <button id="to-top" type="button" class="to-top" aria-label="Back to top" title="Back to top" hidden>
+      <svg class="icon" aria-hidden="true"><use href="#i-up"/></svg>
+    </button>
+    </div>
+
+    <div id="scrim" class="scrim" hidden></div>
+    <aside id="detail" class="detail" role="dialog" aria-modal="true" aria-labelledby="detail-title" hidden>
+      <div class="detail-head">
+        <div>
+          <h2 id="detail-title" class="detail-title">Item details</h2>
+          <p id="detail-meta" class="detail-meta"></p>
+        </div>
+        <button id="detail-close" type="button" class="icon-btn" aria-label="Close details">
+          <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
+        </button>
+      </div>
+      <div id="detail-body" class="detail-body"></div>
+      <div class="detail-foot">
+        <button id="detail-prev" type="button" class="btn" title="Previous item (←)"><svg class="icon" aria-hidden="true"><use href="#i-left"/></svg><span>Previous</span></button>
+        <span id="detail-pos" class="detail-pos"></span>
+        <button id="detail-next" type="button" class="btn" title="Next item (→)"><span>Next</span><svg class="icon" aria-hidden="true"><use href="#i-right"/></svg></button>
+      </div>
+    </aside>
+
     <script src="index.js"></script>
   </body>
 </html>
