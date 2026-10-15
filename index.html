@@ -5,8 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="dark">
     <meta name="theme-color" content="#0f1115">
-    <meta name="description" content="Search the Xbox Live Marketplace Archive: 72,000+ Xbox 360 marketplace records by name, Title ID, Offer ID, or Content ID.">
+    <meta name="description" content="Search 72,000+ Xbox 360 marketplace records by Title, Title ID, Offer ID or Content ID. Built on the community-maintained Xbox Live Marketplace Archive.">
     <title>Xbox Live Marketplace Search</title>
+    <!-- Link previews (Discord, Slack, iMessage, social sites). -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Xbox Live Marketplace Search">
+    <meta property="og:title" content="Xbox Live Marketplace Search">
+    <meta property="og:description" content="Search 72,000+ Xbox 360 marketplace records by Title, Title ID, Offer ID or Content ID. Built on the community-maintained Xbox Live Marketplace Archive.">
+    <meta name="twitter:card" content="summary">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f1115'/%3E%3Ccircle cx='14' cy='14' r='7' fill='none' stroke='%2352c23a' stroke-width='3'/%3E%3Cpath d='M19 19l6 6' stroke='%2352c23a' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="style.css">
   </head>
@@ -62,6 +68,8 @@
           <kbd class="search-key" aria-hidden="true">/</kbd>
         </div>
       </div>
+      <!-- Phones: search and type chips sit here, and dock to the bottom of the screen once scrolled past. -->
+      <div class="dock-slot"><div class="dock"></div></div>
     </header>
 
     <noscript><p class="noscript">This search runs in your browser and needs JavaScript. The raw data is in the <a href="https://github.com/jamesruddick/xbox-live-marketplace-archive">archive repository</a>.</p></noscript>
@@ -129,33 +137,17 @@
     </div>
     <footer class="foot">
       <div class="foot-inner">
-        <div class="foot-main">
-          <div>
-            <p class="foot-name">Xbox Live Marketplace <span>Search</span></p>
-            <p class="foot-desc">A searchable index of the Xbox 360 marketplace, built on the community-maintained Xbox Live Marketplace Archive. Every record links back to its original XML.</p>
-          </div>
-          <nav class="foot-links" aria-label="Project links">
-            <div>
-              <h2>Project</h2>
-              <ul>
-                <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-archive">Archive repository</a></li>
-                <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-search">Search source code</a></li>
-                <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-search/issues">Report an issue</a></li>
-              </ul>
-            </div>
-            <div>
-              <h2>Data</h2>
-              <ul>
-                <li><a id="foot-csv" href="xbox-live-marketplace-archive/xbox-live-marketplace.en-us.csv" download>Download the CSV index</a></li>
-                <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-archive#-archive-structure">How the archive is organised</a></li>
-                <li><a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 public domain dedication</a></li>
-              </ul>
-            </div>
-          </nav>
-        </div>
+        <p class="foot-name">Xbox Live Marketplace <span>Search</span></p>
+        <p class="foot-desc">A searchable index of the Xbox 360 marketplace, built on the community-maintained <a href="https://github.com/jamesruddick/xbox-live-marketplace-archive">Xbox Live Marketplace Archive</a>.</p>
         <div class="foot-legal">
           <p>A non-commercial community preservation project. Not affiliated with or endorsed by Microsoft. Xbox, Xbox 360 and Xbox Live are trademarks of the Microsoft group of companies; product names belong to their respective owners.</p>
-          <p><a href="https://github.com/jamesruddick/xbox-live-marketplace-archive/issues">Takedown requests</a></p>
+          <nav class="foot-links" aria-label="Project links">
+            <ul>
+              <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-search">Source code<svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a></li>
+              <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-search/issues">Report an issue<svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a></li>
+              <li><a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 license<svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a></li>
+            </ul>
+          </nav>
         </div>
       </div>
     </footer>

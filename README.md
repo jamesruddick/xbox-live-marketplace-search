@@ -1,6 +1,6 @@
 # Xbox Live Marketplace Search
 
-A specialized web interface designed to browse, filter, and search the [Xbox Live Marketplace Archive](https://github.com/jamesruddick/xbox-live-marketplace-archive). This project provides a user-friendly way to navigate thousands of metadata records, making the preservation data accessible to everyone.
+A specialized web interface designed to browse, filter, and search the [Xbox Live Marketplace Archive](https://github.com/jamesruddick/xbox-live-marketplace-archive). This project provides a user-friendly way to navigate more than 72,000 Xbox 360 marketplace records, making the preservation data accessible to everyone.
 
 ## 🚀 Getting Started
 
@@ -25,3 +25,6 @@ npx serve
 ```
 
 Then open [http://localhost:3000](http://localhost:3000).
+
+## 📜 License
+This project is dedicated to the public domain under the [CC0 1.0 Universal](LICENSE) license. The archive data has its own license; see the [archive repository](https://github.com/jamesruddick/xbox-live-marketplace-archive#-license).

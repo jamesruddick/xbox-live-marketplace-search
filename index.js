@@ -80,7 +80,6 @@ const $ = id => document.getElementById(id);
 const els = {
 	search: $('search-input'),
 	locale: $('locale-select'),
-	footCsv: $('foot-csv'),
 	clear: $('search-clear'),
 	filters: $('type-filters'),
 	sort: $('sort-select'),
@@ -123,7 +122,7 @@ const els = {
 const indexCache = new Map();
 
 // Desktop scrolls inside #page so the modal's overlay covers its scrollbar; phones scroll the document.
-const desktopLayout = matchMedia('(min-width: 721px)');
+const desktopLayout = matchMedia('(min-width: 769px)');
 const scroller = () => (desktopLayout.matches ? els.page : document.scrollingElement);
 let items = [];
 let byId = new Map();
@@ -1095,7 +1094,8 @@ els.body.addEventListener('click', event => {
 	openDetail(tr.dataset.id);
 });
 
-// Height covered by pinned UI at the top: header + column headings on desktop, the header (with chips) on phones.
+// Height covered by pinned UI at the top: header + column headings on desktop. Phones pin nothing at
+// the top (the header scrolls away and search docks to the bottom), so this is just any header still showing.
 function pinnedHeight() {
 	if (desktopLayout.matches) return els.header.offsetHeight + els.table.tHead.offsetHeight;
 	return Math.max(0, els.header.getBoundingClientRect().bottom);
@@ -1105,21 +1105,23 @@ function pinnedHeight() {
 function revealRow(tr) {
 	const row = tr.getBoundingClientRect();
 	const top = pinnedHeight();
-	if (row.top >= top && row.bottom <= window.innerHeight) return;
-	scroller().scrollBy({ top: row.top - top - (window.innerHeight - top - row.height) / 2 });
+	const bottom = window.innerHeight - (docked ? dock.offsetHeight : 0);
+	if (row.top >= top && row.bottom <= bottom) return;
+	scroller().scrollBy({ top: row.top - top - (bottom - top - row.height) / 2 });
 }
 
 // After the list changes (type, sort), jump back to its top if we were scrolled down into it.
 function scrollToResults() {
 	const stuck = Math.max(els.header.getBoundingClientRect().bottom, 0);
 	const toolbar = els.main.querySelector('.toolbar').getBoundingClientRect().top;
-	if (toolbar < stuck) scroller().scrollBy({ top: toolbar - stuck - 8 });
+	// Phones scroll it flush to the top (the toolbar has its own padding) so the docked bar stays docked.
+	if (toolbar < stuck) scroller().scrollBy({ top: toolbar - stuck - (desktopLayout.matches ? 8 : 0) });
 }
 
 function goToPage(page) {
 	state.page = page;
 	update({ resetPage: false });
-	const top = els.table.getBoundingClientRect().top - els.header.offsetHeight - 8;
+	const top = els.table.getBoundingClientRect().top - (desktopLayout.matches ? els.header.offsetHeight : 0) - 8;
 	scroller().scrollBy({ top });
 }
 els.prev.addEventListener('click', () => goToPage(state.page - 1));
@@ -1134,7 +1136,7 @@ els.scrim.addEventListener('click', closeDetail);
 	let startY = null;
 	let dy = 0;
 	head.addEventListener('touchstart', event => {
-		if (!matchMedia('(max-width: 720px)').matches) return;
+		if (!matchMedia('(max-width: 768px)').matches) return;
 		startY = event.touches[0].clientY;
 		dy = 0;
 		els.detail.classList.add('is-dragging');
@@ -1214,16 +1216,74 @@ document.addEventListener('keydown', event => {
 	}
 });
 
-// Phones pin the type chips inside the header; desktop lets them scroll with the results.
+// Desktop: search sits in the header row and the type chips scroll with the results.
+// Phones: both move into the dock, which docks to the bottom of the screen once scrolled past.
 const filtersWrap = document.querySelector('.filters-wrap');
+const searchBox = document.querySelector('.search');
+const dockSlot = document.querySelector('.dock-slot');
+const dock = document.querySelector('.dock');
 function placeFilters() {
-	if (desktopLayout.matches) els.main.prepend(filtersWrap);
-	else els.header.append(filtersWrap);
+	if (desktopLayout.matches) {
+		document.querySelector('.brand-row').after(searchBox);
+		els.main.prepend(filtersWrap);
+		setDocked(false);
+	} else {
+		dock.append(searchBox, filtersWrap);
+		syncDock();
+	}
+}
+
+let docked = false;
+let slotHeight = 0;
+function setDocked(on) {
+	if (on === docked) return;
+	docked = on;
+	// The slot keeps the dock's height while it is out of the flow, so the page doesn't jump.
+	if (on) slotHeight = dockSlot.offsetHeight;
+	dockSlot.style.height = on ? `${slotHeight}px` : '';
+	dock.classList.toggle('is-docked', on);
+	document.documentElement.classList.toggle('has-dock', on);
+	syncDockHeight();
+}
+function syncDockHeight() {
+	document.documentElement.style.setProperty('--dock-h', docked ? `${dock.offsetHeight}px` : '0px');
+}
+// Docked once the slot has scrolled off the top; stays docked while typing, so a shrinking result
+// list can't yank the focused box back up to the header mid-word.
+function syncDock() {
+	if (desktopLayout.matches) return;
+	const top = dockSlot.getBoundingClientRect().top;
+	const past = top + (docked ? slotHeight : dockSlot.offsetHeight) <= 0;
+	setDocked(past || (docked && document.activeElement === els.search));
+	if (!docked) return;
+	// Docked only because the box is focused, with its slot on screen (typing shrank the list to the
+	// top of the page): collapse the slot rather than show an empty gap. Restore it once scrolled past,
+	// shifting the scroll by the same amount since it grows above the viewport (unless the browser's
+	// scroll anchoring already did).
+	const want = past ? slotHeight : 0;
+	const had = dockSlot.offsetHeight;
+	if (had === want) return;
+	const y = scroller().scrollTop;
+	dockSlot.style.height = `${want}px`;
+	if (want > had && dockSlot.offsetHeight && scroller().scrollTop === y) scroller().scrollBy({ top: want - had, behavior: 'instant' });
+}
+window.addEventListener('scroll', syncDock, { passive: true });
+els.search.addEventListener('blur', () => requestAnimationFrame(syncDock));
+new ResizeObserver(syncDockHeight).observe(dock);
+// Keep the docked bar above the on-screen keyboard (iOS leaves fixed elements behind it).
+if (window.visualViewport) {
+	const syncKeyboard = () => {
+		// Pinch-zoom also shrinks the visual viewport; only a keyboard does so at scale 1.
+		const covered = visualViewport.scale > 1.01 ? 0 : window.innerHeight - visualViewport.height - visualViewport.offsetTop;
+		document.documentElement.style.setProperty('--kb', `${Math.max(0, Math.round(covered))}px`);
+	};
+	visualViewport.addEventListener('resize', syncKeyboard);
+	visualViewport.addEventListener('scroll', syncKeyboard);
 }
 placeFilters();
 
 // Desktop scrolls inside #page, phones scroll the document, so switching layouts (e.g. rotating a
-// large phone past 720px) would lose the scroll position. Track the first visible row and return to it.
+// large phone past 768px) would lose the scroll position. Track the first visible row and return to it.
 let anchorId = '';
 let anchorFrame = 0;
 function recordAnchor() {
@@ -1299,8 +1359,6 @@ async function loadLocale({ openItem = '', focus = false } = {}) {
 	const locale = state.locale;
 	const token = ++loadToken;
 	renderLocales();
-	els.footCsv.href = indexUrl(locale);
-	els.footCsv.download = indexUrl(locale).split('/').pop();
 	document.documentElement.dataset.locale = locale;
 
 	if (!indexCache.has(locale)) {
@@ -1359,7 +1417,7 @@ els.locale.addEventListener('change', () => {
 /* ---------- Locale dropdown ---------- */
 
 // Phones show just the locale code so the title keeps its room; wider screens show the full name.
-const compactLocales = matchMedia('(max-width: 720px)');
+const compactLocales = matchMedia('(max-width: 768px)');
 function labelLocales() {
 	els.localeValue.textContent = compactLocales.matches ? state.locale : localeName(state.locale);
 	els.localeTrigger.title = localeLongName(state.locale);
@@ -1555,6 +1613,6 @@ async function checkArchiveLocales() {
 	els.offerToggle.checked = state.offerOnly;
 	loadLocale({
 		openItem: state.item,
-		focus: !state.query && matchMedia('(min-width: 721px)').matches,
+		focus: !state.query && matchMedia('(min-width: 769px)').matches,
 	});
 })();
