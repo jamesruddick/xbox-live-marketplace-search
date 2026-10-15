@@ -72,6 +72,10 @@ const TYPES = [
 	{ id: '20', label: 'Themes', singular: 'Theme' },
 	{ id: '22', label: 'Gamer Pictures', singular: 'Gamer Picture' },
 	{ id: '47', label: 'Avatar Items', singular: 'Avatar Item' },
+	{ id: '30', label: 'Game Videos', singular: 'Game Video' },
+	{ id: '34', label: 'Game Trailers', singular: 'Game Trailer' },
+	{ id: '46', label: 'Applications', singular: 'Application' },
+	{ id: '61', label: 'Streaming Services', singular: 'Streaming Service' },
 ];
 const TYPE_BY_ID = Object.fromEntries(TYPES.map(t => [t.id, t]));
 const typeName = id => TYPE_BY_ID[id]?.singular ?? `Type ${id}`;
@@ -491,6 +495,7 @@ function parseRecord(xmlText) {
 		rating: rating ? { value: rating, count: Number(tagText(entry, 'numberOfRatings')) || 0 } : null,
 		parent: tagText(entry, 'parentReducedTitle'),
 		size: packageBytes ? formatBytes(packageBytes) : '',
+		entry,
 	};
 }
 
@@ -550,29 +555,7 @@ function idsSection(item) {
 	);
 }
 
-function actionsSection(item) {
-	const xml = el('a', { className: 'btn btn-primary', href: recordUrl(item.id), target: '_blank', rel: 'noopener' }, icon('external'), 'Open raw XML');
-	const share = el('button', { type: 'button', className: 'btn' }, icon('link'), 'Copy link');
-	share.addEventListener('click', async () => {
-		try {
-			await navigator.clipboard.writeText(location.href);
-			share.replaceChildren(icon('check'), 'Link copied');
-		} catch {
-			share.replaceChildren(icon('x'), 'Copy failed');
-		}
-		setTimeout(() => share.replaceChildren(icon('link'), 'Copy link'), 1600);
-	});
-	const nodes = [xml, share];
-	if (item.titleId) {
-		const related = el('button', { type: 'button', className: 'btn' }, icon('search'), 'Same Title ID');
-		related.title = 'Show every item with this Title ID';
-		related.addEventListener('click', () => searchFor(item.titleId));
-		nodes.push(related);
-	}
-	return el('div', { className: 'actions' }, ...nodes);
-}
-
-const PARENT_LABELS = { 5: 'Full game', 19: 'Full game', 18: 'Add-on for', 20: 'Theme for', 22: 'Pictures for', 47: 'Item from' };
+const PARENT_LABELS = { 5: 'Full Game', 19: 'Full Game', 18: 'Add-on for', 20: 'Theme for', 22: 'Pictures for', 47: 'Item from' };
 
 // Five stars filled to the exact score, then the number and the vote count.
 function ratingNode({ value, count }) {
@@ -591,6 +574,20 @@ function ratingNode({ value, count }) {
 	return node;
 }
 
+const longTimestamp = new Intl.DateTimeFormat('en-GB', {
+	day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23', timeZone: 'UTC',
+});
+
+// "2014-03-17T18:37:35.987Z" → "17 Mar 2014, 18:37:35 UTC"; the archive's timestamps are all UTC.
+function formatUpdated(value) {
+	if (!formatDate(value)) return '';
+	const date = new Date(/[zZ]$|[+-]\d\d:?\d\d$/.test(value) ? value : `${value.replace(' ', 'T')}Z`);
+	if (Number.isNaN(date.getTime())) return '';
+	const node = el('time', { dateTime: date.toISOString() }, `${longTimestamp.format(date)} UTC`);
+	node.title = date.toISOString();
+	return node;
+}
+
 function recordSections(record, item) {
 	const sections = [];
 	const facts = [
@@ -599,7 +596,7 @@ function recordSections(record, item) {
 		['Released', record.released],
 		['Genre', record.genres.join(', ')],
 		['Rating', record.rating && ratingNode(record.rating)],
-		['Download size', record.size],
+		['Download Size', record.size],
 	].filter(([, v]) => v);
 	const parentLabel = PARENT_LABELS[item.type];
 	if (record.parent && parentLabel && record.parent.toLowerCase() !== item.title.toLowerCase()) {
@@ -624,7 +621,198 @@ function recordSections(record, item) {
 		}
 		sections.push(section);
 	}
+	sections.push(fullRecordSection(record.entry, item));
 	return sections;
+}
+
+/* ---------- Full record ---------- */
+
+// Field names are camelCase in the XML; these read better spelled out.
+const FIELD_LABELS = {
+	id: 'ID', hexTitleId: 'Title ID (Hex)', hexOfferId: 'Offer ID (Hex)', titleId: 'Title ID', offerId: 'Offer ID',
+	productId: 'Product ID', contentId: 'Content ID', fileUrl: 'File URL', userRating: 'User Rating',
+	effectiveTitleId: 'Effective Title ID', parentProductId: 'Parent Product ID', pricetext: 'Price Text',
+	slideShows: 'Slideshow',
+};
+// A repeated group's items are named after their most telling field.
+const ITEM_NAME_FIELDS = ['categoryName', 'fullTitle', 'reducedTitle', 'parentReducedTitle', 'ratingDisclaimerText', 'storeName', 'pricetext', 'offerId', 'fileUrl', 'relatedUrl'];
+const SKIPPED_FIELDS = new Set(['content', 'itemNum']);
+
+const fieldLabel = name => FIELD_LABELS[name] ?? name
+	.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+	.replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+	.replace(/^./, c => c.toUpperCase())
+	.replace(/ (Of|For|On|In|To|And|Per|By)(?= )/g, w => w.toLowerCase())
+	.replace(/\b(id|url|hdtv)\b/gi, w => w.toUpperCase());
+
+function fieldValue(name, text) {
+	if (/^https?:\/\//.test(text)) {
+		return el('a', { href: text, target: '_blank', rel: 'noopener noreferrer', className: 'record-link' }, text);
+	}
+	if (name === 'productType') return `${typeName(text)} (${text})`;
+	if (/size$/i.test(name) && /^\d{4,}$/.test(text)) return `${formatBytes(text)} (${fmt.format(Number(text))} bytes)`;
+	if (/date$|^updated$/i.test(name) && text.startsWith('0000')) return 'Not set';
+	if (/^\d{4}-\d{2}-\d{2}T/.test(text)) return text.replace('T', ' ').replace(/(\.\d+)?Z?$/, '');
+	return text;
+}
+
+function fileName(url) {
+	const name = url.split(/[?#]/)[0].split('/').pop();
+	try { return decodeURIComponent(name) || url; } catch { return name || url; }
+}
+
+function itemName(node) {
+	for (const field of ITEM_NAME_FIELDS) {
+		// Only the item's own fields: a wrapper must not borrow the name of something nested inside it.
+		const text = Array.from(node.children).find(child => child.localName === field)?.textContent.trim();
+		if (text) return /^https?:\/\//.test(text) ? fileName(text) : text;
+	}
+	// Nothing names it, so the row's number does the work: "01 Subscription".
+	return fieldLabel(node.localName);
+}
+
+const MONO_VALUE = /^(0x[0-9a-f]+|urn:uuid:\S+|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}|-?\d+(\.\d+)?)$/i;
+
+function specValue(name, text) {
+	const value = fieldValue(name, text);
+	if (typeof value !== 'string') return value;
+	if (MONO_VALUE.test(value)) return el('span', { className: 'mono' }, value);
+	if (value.length <= 240) return value;
+	const long = el('span', { className: 'spec-long is-clamped' }, value);
+	const more = el('button', { type: 'button', className: 'link-btn' }, 'Show more');
+	more.addEventListener('click', () => {
+		const open = long.classList.toggle('is-clamped');
+		more.textContent = open ? 'Show more' : 'Show less';
+	});
+	return el('span', {}, long, more);
+}
+
+function specList(rows) {
+	return el('dl', { className: 'spec' }, ...rows.map(([label, value]) =>
+		el('div', { className: 'spec-row' }, el('dt', {}, label), el('dd', {}, value))));
+}
+
+const ownAttributes = node => Array.from(node.attributes).filter(a => !a.name.startsWith('xmlns') && !SKIPPED_FIELDS.has(a.localName) && a.value.trim());
+
+// A value with no child elements, e.g. <ratingDescriptor level="1.0000">23</ratingDescriptor>; its attributes follow the text.
+function leafValue(node) {
+	const text = node.textContent.trim();
+	const attrs = ownAttributes(node);
+	if (!attrs.length) return text ? specValue(node.localName, text) : null;
+	const notes = attrs.map(a => `${fieldLabel(a.localName).toLowerCase()} ${/^-?\d+\.\d+$/.test(a.value) ? Number(a.value) : a.value.trim()}`);
+	return el('span', {}, text ? specValue(node.localName, text) : '', el('span', { className: 'spec-note' }, notes.join(' · ')));
+}
+
+function leafRow(name, values) {
+	const shown = values.filter(Boolean);
+	if (!shown.length) return null;
+	const value = shown.length === 1 ? shown[0] : el('ul', { className: 'spec-values' }, ...shown.map(v => el('li', {}, v)));
+	return [fieldLabel(name), value];
+}
+
+const isListOf = items => items.length > 0 && items.every(i => i.localName === items[0].localName && i.children.length);
+
+// <images><image/>…</images> lists items of one kind; anything else is a single nested object (null).
+// A lone wrapper with nothing else in it is looked through, so <slideShows><slideShow><image/>… lists the images.
+function listItems(node) {
+	let items = Array.from(node.children);
+	if (!isListOf(items)) return null;
+	while (items.length === 1 && !ownAttributes(items[0]).length && isListOf(Array.from(items[0].children))) items = Array.from(items[0].children);
+	return items;
+}
+
+// Splits an element into plain label/value rows and nested groups, skipping empty values.
+// A group is { name, node, items }, with items null when it is a single nested object rather than a list.
+function recordParts(node) {
+	const rows = ownAttributes(node).map(a => [fieldLabel(a.localName), specValue(a.localName, a.value.trim())]);
+	const groups = [];
+	const byName = new Map();
+	for (const child of node.children) {
+		if (SKIPPED_FIELDS.has(child.localName)) continue;
+		if (!byName.has(child.localName)) byName.set(child.localName, []);
+		byName.get(child.localName).push(child);
+	}
+	for (const [name, nodes] of byName) {
+		// Repeated plain values (<ratingDescriptor/> ×4) become one row listing each value.
+		const row = leafRow(name, nodes.filter(n => !n.children.length).map(leafValue));
+		if (row) rows.push(row);
+		const branches = nodes.filter(n => n.children.length);
+		if (branches.length > 1) {
+			// Siblings sharing a tag (two <productInstance/> in one offer) form one list.
+			groups.push({ name, node: null, items: branches });
+		} else if (branches.length) {
+			const [branch] = branches;
+			const kids = Array.from(branch.children);
+			// A wrapper of plain values (<tiers><tier>3</tier></tiers>) is just a value, not a group.
+			if (!ownAttributes(branch).length && kids.every(k => !k.children.length && k.localName === kids[0].localName)) {
+				const wrapped = leafRow(name, kids.map(leafValue));
+				if (wrapped) rows.push(wrapped);
+			} else {
+				groups.push({ name, node: branch, items: listItems(branch) });
+			}
+		}
+	}
+	return { rows, groups };
+}
+
+function recordBody(node) {
+	const { rows, groups } = recordParts(node);
+	const body = el('div', { className: 'spec-body' });
+	if (rows.length) body.append(specList(rows));
+	for (const group of groups) body.append(groupBlock(group));
+	if (!body.children.length) body.append(el('p', { className: 'record-empty' }, 'No values'));
+	return body;
+}
+
+function groupBlock({ name, node, items }) {
+	const head = el('h4', { className: 'spec-group-title' }, fieldLabel(name));
+	const block = el('div', { className: 'spec-group' }, head);
+	if (!items) {
+		block.append(recordBody(node));
+		return block;
+	}
+	head.append(el('span', { className: 'n' }, fmt.format(items.length)));
+	if (name === 'categories') {
+		// Tags read better than a fold per category; the IDs ride along in muted text.
+		block.append(el('ul', { className: 'tags' }, ...items.map(category => {
+			const id = tagText(category, 'categoryId');
+			const extra = [
+				tagText(category, 'parentCategoryId') && `parent ${tagText(category, 'parentCategoryId')}`,
+				tagText(category, 'categorySystemId') && `system ${tagText(category, 'categorySystemId')}`,
+			].filter(Boolean).join(' · ');
+			const tag = el('li', {}, tagText(category, 'categoryName') || `Category ${id}`, id && el('span', { className: 'mono tag-id' }, id));
+			if (extra) tag.append(el('span', { className: 'visually-hidden' }, ` (${extra})`));
+			tag.title = [id && `ID ${id}`, extra].filter(Boolean).join(' · ');
+			return tag;
+		})));
+		return block;
+	}
+	block.append(...items.map((item, i) => {
+		const summary = el('summary', {},
+			el('span', { className: 'spec-item-index mono' }, String(i + 1).padStart(2, '0')),
+			el('span', { className: 'spec-item-name' }, itemName(item)),
+			icon('chevron-down'));
+		return el('details', { className: 'spec-item' }, summary, recordBody(item));
+	}));
+	return block;
+}
+
+function fullRecordSection(entry, item) {
+	const { rows, groups } = recordParts(entry);
+	const sheet = el('div', { className: 'sheet' });
+	if (rows.length) sheet.append(specList(rows));
+	for (const group of groups) sheet.append(groupBlock(group));
+	const source = el('a', { href: recordUrl(item.id), target: '_blank', rel: 'noopener', className: 'record-source' }, icon('external'), 'View source XML');
+	const details = el('details', { className: 'record' },
+		el('summary', {},
+			el('span', { className: 'record-head' },
+				el('span', { className: 'record-title' }, 'Full Record'),
+				el('span', { className: 'record-sub' }, 'All data from the original marketplace listing')),
+			icon('chevron-down')),
+		sheet,
+		source,
+	);
+	return el('section', { className: 'section' }, details);
 }
 
 function searchFor(query) {
@@ -732,15 +920,24 @@ const wait = ms => new Promise(resolve => setTimeout(() => resolve(null), ms));
 // outcome: { record } once loaded, { error } on failure, or null while still loading.
 function renderDetail(item, outcome) {
 	const title = outcome?.record?.title || item.title;
-	els.detailMeta.textContent = [typeName(item.type), item.titleId].filter(Boolean).join(' · ');
+	// Pills wrap as wholes, so on narrow screens the update time drops to its own line intact.
+	const updated = formatUpdated(item.updated || (outcome?.record ? tagText(outcome.record.entry, 'updated') : ''));
+	els.detailMeta.replaceChildren(...[
+		el('span', { className: 'pill pill-type' }, typeName(item.type)),
+		item.titleId && el('span', { className: 'pill mono' }, item.titleId),
+		updated && el('span', { className: 'pill' }, icon('clock'), el('span', {}, 'Updated ', updated)),
+	].filter(Boolean).flatMap((pill, i) => i ? [el('span', { className: 'visually-hidden' }, ', '), pill] : [pill]));
 	els.detailTitle.textContent = title;
 	els.detailTitle.title = title;
 	let rest;
 	if (outcome?.record) rest = recordSections(outcome.record, item);
-	else if (outcome?.error) rest = [el('p', { className: 'error-note' }, `${outcome.error.message} The identifiers above come from the index and are still accurate.`)];
+	else if (outcome?.error) rest = [
+		el('p', { className: 'error-note' }, `${outcome.error.message} The identifiers above come from the index and are still accurate.`),
+		el('a', { href: recordUrl(item.id), target: '_blank', rel: 'noopener', className: 'record-source' }, icon('external'), 'Try the original XML'),
+	];
 	else rest = [el('section', { className: 'section' },
 		el('div', { className: 'skeleton w60' }), el('div', { className: 'skeleton w80' }), el('div', { className: 'skeleton w60' }))];
-	els.detailBody.replaceChildren(actionsSection(item), idsSection(item), ...rest);
+	els.detailBody.replaceChildren(idsSection(item), ...rest);
 	resetDetailScroll();
 }
 
