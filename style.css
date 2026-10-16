@@ -181,8 +181,7 @@ button, input, select { font: inherit; color: inherit; }
 .chip:hover { border-color: var(--line-hover); color: var(--text); }
 .chip .n { font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--text-3); }
 .chip[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.chip[aria-checked="true"] .n { color: rgba(7, 33, 10, 0.72); }
-.chip.is-empty:not([aria-checked="true"]) { opacity: 0.45; }
+.chip:where([aria-checked="true"]) .n { color: rgba(7, 33, 10, 0.72); }
 
 .results { padding: 0 var(--gutter); }
 .toolbar {
@@ -417,7 +416,7 @@ mark { background: var(--accent-mark); color: inherit; border-radius: 2px; }
 .status .btn { margin-top: 18px; }
 
 .foot {
-	margin-top: 48px;
+	margin-top: 24px;
 	border-top: 1px solid var(--line);
 	background: var(--bg-raised);
 	color: var(--text-3);
@@ -435,8 +434,8 @@ mark { background: var(--accent-mark); color: inherit; border-radius: 2px; }
 .foot-links { flex: none; }
 .foot-links ul { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 8px 24px; }
 .foot-links a { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.foot a .icon { width: 12px; height: 12px; color: var(--text-3); transition: color 0.15s; }
-.foot a:hover .icon { color: currentColor; }
+.foot :where(a) .icon { width: 12px; height: 12px; color: var(--text-3); transition: color 0.15s; }
+.foot :where(a:hover) .icon { color: currentColor; }
 .foot-legal {
 	display: flex;
 	justify-content: space-between;
@@ -521,7 +520,6 @@ mark { background: var(--accent-mark); color: inherit; border-radius: 2px; }
 	background: var(--bg-hover);
 	white-space: nowrap;
 }
-.pill.mono { font-size: 11.5px; }
 .pill .icon { width: 13px; height: 13px; color: var(--text-3); }
 .pill-type { border-color: transparent; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .detail-title { margin: 0; font-size: 22px; line-height: 1.25; font-weight: 650; letter-spacing: -0.01em; text-wrap: balance; overflow-wrap: anywhere; }
@@ -603,6 +601,10 @@ mark { background: var(--accent-mark); color: inherit; border-radius: 2px; }
 .facts .link-btn { margin: 0; padding: 0; font: inherit; line-height: inherit; text-align: left; }
 
 .record { border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
+.record-source { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; margin: 10px 0 0; color: var(--text-3); font-size: 13px; text-decoration: none; }
+.record .record-source { margin: 0 14px 10px; }
+.record-source:hover { color: var(--accent); }
+.record-source .icon { width: 14px; height: 14px; }
 .record > summary {
 	display: flex;
 	align-items: center;
@@ -616,9 +618,9 @@ mark { background: var(--accent-mark); color: inherit; border-radius: 2px; }
 .record > summary::-webkit-details-marker, .spec-item > summary::-webkit-details-marker { display: none; }
 .record > summary:hover { background: var(--bg-hover); }
 .record > summary:focus-visible, .spec-item > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.record[open] > summary { border-bottom: 1px solid var(--line); border-radius: var(--radius) var(--radius) 0 0; }
+.record:where([open]) > summary { border-bottom: 1px solid var(--line); border-radius: var(--radius) var(--radius) 0 0; }
 .record > summary > .icon, .spec-item > summary > .icon { flex: none; width: 16px; height: 16px; color: var(--text-3); transition: transform 0.2s var(--ease); }
-.record[open] > summary > .icon, .spec-item[open] > summary > .icon { transform: rotate(180deg); }
+.record:where([open]) > summary > .icon, .spec-item:where([open]) > summary > .icon { transform: rotate(180deg); }
 .record-head { display: grid; gap: 2px; min-width: 0; }
 .record-title { font-size: 14px; font-weight: 600; color: var(--text); }
 .record-sub { color: var(--text-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -686,10 +688,6 @@ mark { background: var(--accent-mark); color: inherit; border-radius: 2px; }
 .tags .tag-id { color: var(--text-3); font-size: 11px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-.record-source { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; margin: 10px 0 0; color: var(--text-3); font-size: 13px; text-decoration: none; }
-.record .record-source { margin: 0 14px 10px; }
-.record-source:hover { color: var(--accent); }
-.record-source .icon { width: 14px; height: 14px; }
 .skeleton { height: 14px; margin: 10px 0; border-radius: 4px; background: linear-gradient(90deg, var(--bg-hover), var(--bg-shimmer), var(--bg-hover)); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
 .skeleton.w60 { width: 60%; }
 .skeleton.w80 { width: 80%; }
@@ -712,6 +710,8 @@ mark { background: var(--accent-mark); color: inherit; border-radius: 2px; }
 	.top { position: relative; background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
 	.dock { display: flex; flex-direction: column; gap: 10px; }
 	.dock .search { max-width: none; margin-inline: var(--gutter); }
+	.filters { padding: 0 var(--gutter) 12px; }
+	.filters-wrap::after { bottom: 12px; }
 	.dock.is-docked {
 		position: fixed;
 		left: 0;
@@ -734,8 +734,6 @@ mark { background: var(--accent-mark); color: inherit; border-radius: 2px; }
 	.brand { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 16px; line-height: 24px; }
 	.locale { flex: none; }
 	.locale-trigger { height: 28px; font-size: 13px; }
-	.filters { padding: 0 var(--gutter) 12px; }
-	.filters-wrap::after { bottom: 12px; }
 	.search-key { display: none; }
 
 	.toolbar { padding-top: 12px; flex-wrap: nowrap; }
@@ -815,6 +813,7 @@ mark { background: var(--accent-mark); color: inherit; border-radius: 2px; }
 	.foot-links { order: -1; }
 	.foot-links ul { gap: 0 18px; margin-block: -10px; }
 	.foot-links a { padding-block: 10px; }
+	.foot-legal { margin-top: 20px; padding-top: 12px; }
 }
 
 @media (max-width: 860px) {
@@ -830,6 +829,8 @@ mark { background: var(--accent-mark); color: inherit; border-radius: 2px; }
 	.detail-foot .btn { padding: 0 10px; font-size: 13px; }
 	.facts { grid-template-columns: 1fr; gap: 0; }
 	.facts dd { margin-bottom: 8px; }
+	/* Tighter spacing keeps the three footer links on one line at iPhone SE width (375px). */
+	.foot-links ul { column-gap: 12px; }
 }
 
 /* Phones down to iPhone SE: labels sit above their values so long IDs and URLs keep the full width. */

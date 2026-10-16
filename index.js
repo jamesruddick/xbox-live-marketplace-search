@@ -284,7 +284,9 @@ function update({ resetPage = true } = {}) {
 const fmt = new Intl.NumberFormat('en-US');
 
 function renderFilters(counts, total) {
-	const chips = [{ id: '', label: 'All', n: total }, ...TYPES.map(t => ({ id: t.id, label: t.label, n: counts[t.id] || 0 }))];
+	const chips = [{ id: '', label: 'All', n: total }, ...TYPES.map(t => ({ id: t.id, label: t.label, n: counts[t.id] || 0 }))]
+		// Types with no matches are hidden, but All and the selected type always stay.
+		.filter(chip => chip.n > 0 || chip.id === '' || chip.id === state.type);
 	els.filters.replaceChildren(...chips.map(chip => {
 		const button = document.createElement('button');
 		button.type = 'button';
@@ -292,7 +294,6 @@ function renderFilters(counts, total) {
 		button.setAttribute('role', 'radio');
 		button.setAttribute('aria-checked', String(state.type === chip.id));
 		button.dataset.type = chip.id;
-		button.classList.toggle('is-empty', chip.n === 0);
 		button.append(chip.label);
 		const n = document.createElement('span');
 		n.className = 'n';
@@ -924,7 +925,6 @@ function renderDetail(item, outcome) {
 	const updated = formatUpdated(item.updated || (outcome?.record ? tagText(outcome.record.entry, 'updated') : ''));
 	els.detailMeta.replaceChildren(...[
 		el('span', { className: 'pill pill-type' }, typeName(item.type)),
-		item.titleId && el('span', { className: 'pill mono' }, item.titleId),
 		updated && el('span', { className: 'pill' }, icon('clock'), el('span', {}, 'Updated ', updated)),
 	].filter(Boolean).flatMap((pill, i) => i ? [el('span', { className: 'visually-hidden' }, ', '), pill] : [pill]));
 	els.detailTitle.textContent = title;
@@ -1138,9 +1138,9 @@ els.offerToggle.addEventListener('change', () => {
 const SORT_OPTIONS = [
 	{ value: 'title', label: 'Title A–Z', group: 'Title' },
 	{ value: '-title', label: 'Title Z–A', group: 'Title' },
-	{ value: '-updated', label: 'Recently updated', group: 'Last updated' },
-	{ value: 'updated', label: 'Oldest updated', group: 'Last updated' },
-	{ value: 'type', label: 'Product type', group: 'Type' },
+	{ value: '-updated', label: 'Recently Updated', group: 'Last Updated' },
+	{ value: 'updated', label: 'Oldest Updated', group: 'Last Updated' },
+	{ value: 'type', label: 'Product Type', group: 'Type' },
 ];
 let sortActive = 0;
 
