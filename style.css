@@ -411,8 +411,6 @@ mark { background: var(--accent-mark); color: inherit; border-radius: 2px; }
 }
 .btn:hover { background: var(--bg-hover); border-color: var(--line-hover); }
 .btn:disabled { opacity: 0.4; cursor: default; background: var(--bg-input); border-color: var(--line-strong); }
-.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .status .btn { margin-top: 18px; }
 
 .foot {

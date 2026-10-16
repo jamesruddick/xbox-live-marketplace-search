@@ -333,7 +333,7 @@ function cell(className, content) {
 	td.className = className;
 	if (content instanceof Node) td.append(content);
 	else if (content) td.textContent = content;
-	else { td.textContent = '—'; td.classList.add('muted'); }
+	else { td.textContent = '–'; td.classList.add('muted'); }
 	return td;
 }
 
@@ -403,7 +403,7 @@ function showStatus(kind, message, locale) {
 		const h = document.createElement('h2');
 		h.textContent = 'No items match';
 		const p = document.createElement('p');
-		const typeLabel = TYPE_BY_ID[state.type]?.label ?? 'this type';
+		const typeLabel = TYPE_BY_ID[state.type]?.label ?? 'items';
 		p.textContent = state.offerOnly && !state.query
 			? `No ${typeLabel} in this locale have an Offer ID.`
 			: !state.query
@@ -411,25 +411,18 @@ function showStatus(kind, message, locale) {
 			: state.type
 				? `Nothing in ${typeLabel} matches “${state.query}”.`
 				: `Nothing matches “${state.query}”. Try fewer words, or a Title ID like 0x4d5307e6.`;
-		const reset = document.createElement('button');
-		reset.type = 'button';
-		reset.className = 'btn';
-		reset.textContent = state.type ? 'Search all types' : 'Clear search';
-		reset.addEventListener('click', () => {
-			if (state.type) state.type = '';
-			else setQuery('');
-			update();
-		});
-		els.status.append(h, p, reset);
-		if (state.offerOnly) {
-			const showAll = el('button', { type: 'button', className: 'btn' }, 'Include items without an Offer ID');
-			showAll.addEventListener('click', () => {
-				state.offerOnly = false;
-				els.offerToggle.checked = false;
-				update();
-			});
-			els.status.replaceChildren(h, p, el('div', { className: 'status-actions' }, reset, showAll));
-		}
+		// Only offer the ways out that would actually change the results.
+		const actions = el('div', { className: 'status-actions' });
+		const action = (label, run) => {
+			const button = el('button', { type: 'button', className: 'btn' }, label);
+			button.addEventListener('click', () => { run(); update(); });
+			actions.append(button);
+		};
+		if (state.type) action('Search all types', () => { state.type = ''; });
+		else if (state.query) action('Clear search', () => setQuery(''));
+		if (state.offerOnly) action('Include items without an Offer ID', () => { state.offerOnly = false; els.offerToggle.checked = false; });
+		els.status.append(h, p);
+		if (actions.children.length) els.status.append(actions);
 	} else if (kind === 'error') {
 		const h = document.createElement('h2');
 		h.textContent = 'The archive index could not be loaded';
@@ -461,7 +454,7 @@ const tagAll = (root, name) => Array.from(root.getElementsByTagNameNS('*', name)
 
 function formatBytes(bytes) {
 	const n = Number(bytes);
-	if (!n) return '—';
+	if (!n) return '–';
 	const units = ['B', 'KB', 'MB', 'GB'];
 	let i = 0;
 	let v = n;
@@ -848,7 +841,6 @@ function stepDetail(delta) {
 // inside its own scroll area; anything that still moves the page is undone.
 let lockedScrollY = null;
 
-
 function detailCanScroll(target, deltaY) {
 	const body = els.detailBody;
 	if (!body.contains(target)) return false;
@@ -872,7 +864,7 @@ document.addEventListener('touchmove', event => {
 const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 document.addEventListener('keydown', event => {
 	if (lockedScrollY === null || !SCROLL_KEYS.has(event.key)) return;
-	if (event.key === ' ' && event.target.closest('button, a, input, select')) return;
+	if (event.key === ' ' && event.target.closest('button, a, input, select, summary')) return;
 	if (event.altKey) return;
 	// Scroll keys always scroll the item detail, wherever focus is inside it.
 	event.preventDefault();
@@ -1068,6 +1060,7 @@ window.addEventListener('popstate', () => {
 		closeDetail({ fromHistory: true });
 		setQuery(state.query);
 		els.sort.value = state.sort;
+		els.offerToggle.checked = state.offerOnly;
 		loadLocale({ openItem: state.item });
 		return;
 	}
@@ -1140,7 +1133,8 @@ const SORT_OPTIONS = [
 	{ value: '-title', label: 'Title Z–A', group: 'Title' },
 	{ value: '-updated', label: 'Recently Updated', group: 'Last Updated' },
 	{ value: 'updated', label: 'Oldest Updated', group: 'Last Updated' },
-	{ value: 'type', label: 'Product Type', group: 'Type' },
+	{ value: 'type', label: 'Product Type A–Z', group: 'Type' },
+	{ value: '-type', label: 'Product Type Z–A', group: 'Type' },
 ];
 let sortActive = 0;
 
@@ -1333,7 +1327,7 @@ els.scrim.addEventListener('click', closeDetail);
 	let startY = null;
 	let dy = 0;
 	head.addEventListener('touchstart', event => {
-		if (!matchMedia('(max-width: 768px)').matches) return;
+		if (desktopLayout.matches) return;
 		startY = event.touches[0].clientY;
 		dy = 0;
 		els.detail.classList.add('is-dragging');
@@ -1783,13 +1777,15 @@ function discoverLocales() {
 async function checkArchiveLocales() {
 	const queue = KNOWN_LOCALES.filter(code => code !== DEFAULT_LOCALE);
 	const found = [];
+	let failed = false;
 	const worker = async () => {
 		for (let code = queue.shift(); code; code = queue.shift()) {
 			try {
 				const response = await fetch(indexUrl(code), { method: 'HEAD' });
 				if (response.ok) found.push(code);
+				else if (response.status !== 404) failed = true;
 			} catch {
-				// Unreachable counts as missing.
+				failed = true;
 			}
 		}
 	};
@@ -1797,7 +1793,8 @@ async function checkArchiveLocales() {
 	const others = found.sort((a, b) => localeLongName(a).localeCompare(localeLongName(b)));
 	locales = [DEFAULT_LOCALE, ...others];
 	localesKnown = true;
-	rememberLocales(others);
+	// A check that failed (offline, server error) may have hidden a real locale, so don't keep that answer for a day.
+	if (!failed) rememberLocales(others);
 	renderLocales();
 }
 
@@ -1810,6 +1807,6 @@ async function checkArchiveLocales() {
 	els.offerToggle.checked = state.offerOnly;
 	loadLocale({
 		openItem: state.item,
-		focus: !state.query && matchMedia('(min-width: 769px)').matches,
+		focus: !state.query && desktopLayout.matches,
 	});
 })();

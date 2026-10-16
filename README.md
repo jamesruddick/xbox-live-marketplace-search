@@ -1,6 +1,6 @@
 # Xbox Live Marketplace Search
 
-A specialized web interface designed to browse, filter, and search the [Xbox Live Marketplace Archive](https://github.com/jamesruddick/xbox-live-marketplace-archive). This project provides a user-friendly way to navigate more than 72,000 Xbox 360 marketplace records, making the preservation data accessible to everyone.
+A specialized web interface designed to browse, filter, and search the [Xbox Live Marketplace Archive](https://github.com/jamesruddick/xbox-live-marketplace-archive). This project provides a user-friendly way to navigate the archived Xbox 360 marketplace catalog, making the preservation data accessible to everyone.
 
 ## 🚀 Getting Started
 
