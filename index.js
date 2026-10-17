@@ -40,22 +40,11 @@ const state = { locale: DEFAULT_LOCALE, query: '', type: '', sort: 'title', page
 const indexUrl = locale => `${ARCHIVE}/xbox-live-marketplace.${locale}.csv`;
 const recordUrl = id => `${ARCHIVE}/xbox-live-marketplace.${state.locale}/${id}.xml`;
 
-const languageNames = new Intl.DisplayNames(['en'], { type: 'language', languageDisplay: 'standard', style: 'short' });
-const languageNamesLong = new Intl.DisplayNames(['en'], { type: 'language', languageDisplay: 'standard' });
+const languageNames = new Intl.DisplayNames(['en'], { type: 'language', languageDisplay: 'standard' });
 function localeLongName(code) {
 	const [language, region] = code.split('-');
 	try {
-		return languageNamesLong.of(region ? `${language}-${region.toUpperCase()}` : language);
-	} catch {
-		return code;
-	}
-}
-
-function localeName(code) {
-	const [language, region] = code.split('-');
-	const tag = region ? `${language}-${region.toUpperCase()}` : language;
-	try {
-		return `${languageNames.of(tag)} · ${code}`;
+		return languageNames.of(region ? `${language}-${region.toUpperCase()}` : language);
 	} catch {
 		return code;
 	}
@@ -110,13 +99,11 @@ const els = {
 	pageInfo: $('page-info'),
 	scrim: $('scrim'),
 	detail: $('detail'),
-	detailMeta: $('detail-meta'),
+	detailFoot: $('detail-foot'),
 	detailTitle: $('detail-title'),
 	detailBody: $('detail-body'),
 	detailClose: $('detail-close'),
-	detailPrev: $('detail-prev'),
-	detailNext: $('detail-next'),
-	detailPos: $('detail-pos'),
+	detailTabs: { overview: $('tab-overview'), record: $('tab-record') },
 	page: $('page'),
 	header: document.querySelector('.top'),
 	main: document.querySelector('.results'),
@@ -469,25 +456,39 @@ function formatDate(value) {
 	return value.slice(0, 10);
 }
 
+// Categories form a tree (Game Genres › Xbox LIVE Games › Role Playing) inside system 3000; other
+// systems hold unrelated tags. The genres are the tree's most specific entries, minus store collections
+// like "Xbox 360 Exclusives", and "Other" only when there's nothing better.
+function genreNames(entry) {
+	const categories = tagAll(entry, 'category')
+		.filter(node => tagText(node, 'categorySystemId') === '3000')
+		.map(node => ({ id: tagText(node, 'categoryId'), parent: tagText(node, 'parentCategoryId'), name: tagText(node, 'categoryName') }));
+	const parents = new Set(categories.map(c => c.parent));
+	const leaves = categories.filter(c => c.parent && c.name && !parents.has(c.id) && c.name !== 'Xbox 360 Exclusives').map(c => c.name);
+	const named = leaves.filter(name => name !== 'Other');
+	return [...new Set(named.length ? named : leaves)];
+}
+
 function parseRecord(xmlText) {
 	const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
 	if (doc.getElementsByTagName('parsererror').length) throw new Error('The XML record could not be read.');
 	const entry = doc.getElementsByTagNameNS('*', 'entry')[0] ?? doc;
 	// The download size lives on the offers; the largest package is the one worth showing.
 	const packageBytes = Math.max(0, ...tagAll(entry, 'packageSize').map(node => Number(node.textContent) || 0));
-	const genres = tagAll(entry, 'categoryName')
-		.map(node => node.textContent.trim())
-		.filter(name => name && !/^(game genres|xbox live games|xbox 360 games|xbox live marketplace)$/i.test(name) && !/\bbit \d+$/i.test(name));
+	const genres = genreNames(entry);
 	const rating = Number(tagText(entry, 'userRating'));
 	return {
 		title: tagText(entry, 'fullTitle') || tagText(entry, 'title'),
-		description: tagText(entry, 'fullDescription') || tagText(entry, 'reducedDescription'),
+		description: tagText(entry, 'reducedDescription') || tagText(entry, 'fullDescription'),
 		developer: tagText(entry, 'developerName'),
 		publisher: tagText(entry, 'publisherName'),
 		released: formatDate(tagText(entry, 'globalOriginalReleaseDate')),
-		genres: [...new Set(genres)],
+		genres,
 		rating: rating ? { value: rating, count: Number(tagText(entry, 'numberOfRatings')) || 0 } : null,
-		parent: tagText(entry, 'parentReducedTitle'),
+		parents: tagAll(entry, 'parentProduct').map(node => ({
+			id: stripUrn(tagText(node, 'parentProductId')).toLowerCase(),
+			title: tagText(node, 'parentReducedTitle'),
+		})).filter(parent => parent.id || parent.title),
 		size: packageBytes ? formatBytes(packageBytes) : '',
 		entry,
 	};
@@ -549,7 +550,7 @@ function idsSection(item) {
 	);
 }
 
-const PARENT_LABELS = { 5: 'Full Game', 19: 'Full Game', 18: 'Add-on for', 20: 'Theme for', 22: 'Pictures for', 47: 'Item from' };
+const PARENT_LABELS = { 5: 'Full Game', 19: 'Full Game', 18: 'Game', 20: 'Game', 22: 'Game', 47: 'Game' };
 
 // Five stars filled to the exact score, then the number and the vote count.
 function ratingNode({ value, count }) {
@@ -582,48 +583,116 @@ function formatUpdated(value) {
 	return node;
 }
 
+const longDate = new Intl.DateTimeFormat('en-US', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+const ordinalRules = new Intl.PluralRules('en-US', { type: 'ordinal' });
+const ORDINAL_SUFFIX = { one: 'st', two: 'nd', few: 'rd', other: 'th' };
+
+// "October 28, 2008" → "October 28th, 2008"
+function ordinalDate(date) {
+	return longDate.formatToParts(date)
+		.map(part => part.type === 'day' ? part.value + ORDINAL_SUFFIX[ordinalRules.select(Number(part.value))] : part.value)
+		.join('');
+}
+
+// "2008-10-28" → "October 28th, 2008", keeping the ISO date for anyone who hovers.
+function releasedNode(value) {
+	const date = new Date(`${value}T00:00:00Z`);
+	if (Number.isNaN(date.getTime())) return value;
+	const node = el('time', { dateTime: value }, ordinalDate(date));
+	node.title = value;
+	return node;
+}
+
+// Reads like a store listing: the full title and score, then what it is and who made it, one fact per row.
 function recordSections(record, item) {
 	const sections = [];
-	const facts = [
-		['Developer', record.developer],
-		['Publisher', record.publisher],
-		['Released', record.released],
-		['Genre', record.genres.join(', ')],
-		['Rating', record.rating && ratingNode(record.rating)],
-		['Download Size', record.size],
-	].filter(([, v]) => v);
+	const credits = [];
+	// The header cuts long titles to one line, so the full title always leads the overview.
+	const title = record.title || item.title;
+	if (title) credits.push(['Title', title]);
+	if (record.rating) credits.push(['Rating', el('span', { className: 'summary-rating' }, ratingNode(record.rating))]);
+	if (record.genres.length) credits.push([record.genres.length > 1 ? 'Genres' : 'Genre', record.genres.join(', ')]);
+	if (record.released) credits.push(['Released', releasedNode(record.released)]);
+	if (record.size) credits.push(['Size', record.size]);
+	if (record.developer) credits.push(['Developer', record.developer]);
+	if (record.publisher) credits.push(['Publisher', record.publisher]);
 	const parentLabel = PARENT_LABELS[item.type];
-	if (record.parent && parentLabel && record.parent.toLowerCase() !== item.title.toLowerCase()) {
-		const parent = el('button', { type: 'button', className: 'link-btn' }, record.parent);
-		parent.addEventListener('click', () => searchFor(record.parent));
-		facts.push([parentLabel, parent]);
+	// The parent opens by its product ID, using the index's title when it has one: the record's own
+	// copy is the squeezed "reduced" title (TigerWoodsPGATOUR® 09).
+	const parents = parentLabel ? record.parents.filter(parent => parent.id !== item.id) : [];
+	if (parents.length) {
+		const links = parents.flatMap((parent, i) => {
+			const known = byId.get(parent.id);
+			const name = known?.title || parent.title || parent.id;
+			let link;
+			if (known) {
+				link = el('button', { type: 'button', className: 'link-btn' }, name);
+				link.title = parent.id;
+				link.addEventListener('click', () => openDetail(parent.id, { stack: true }));
+			} else {
+				// Not in this locale's index, so there is nothing to open; the ID still identifies it.
+				link = el('span', {}, name);
+				link.title = parent.id;
+			}
+			return i ? [', ', link] : [link];
+		});
+		credits.push([parentLabel, el('span', {}, ...links)]);
 	}
-	if (facts.length) {
-		sections.push(el('section', { className: 'section' },
-			el('h3', {}, 'About'),
-			el('dl', { className: 'facts' }, ...facts.flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, v)])),
-		));
+	if (credits.length) {
+		// Labels in one column, values in the next, so every value starts at the same edge.
+		sections.push(el('section', { className: 'section section-lead' },
+			el('h3', { className: 'visually-hidden' }, 'About'),
+			el('dl', { className: 'summary-facts' }, ...credits.flatMap(([label, value]) => [el('dt', {}, label), el('dd', {}, value)]))));
 	}
 	if (record.description) {
-		const p = el('p', { className: 'desc' }, record.description);
-		const section = el('section', { className: 'section' }, el('h3', {}, 'Description'), p);
-		if (record.description.length > 360) {
-			p.classList.add('is-clamped');
-			const more = el('button', { type: 'button', className: 'link-btn' }, 'Show full description');
-			more.addEventListener('click', () => { p.classList.remove('is-clamped'); more.remove(); });
-			section.append(more);
-		}
-		sections.push(section);
+		sections.push(el('section', { className: 'section' },
+			el('h3', {}, 'Description'),
+			el('p', { className: 'desc' }, record.description),
+		));
 	}
-	sections.push(fullRecordSection(record.entry, item));
 	return sections;
 }
+
+/* ---------- ESRB ---------- */
+
+// The marketplace stores ESRB ratings and content descriptors as bare numbers. The archive doesn't
+// say what they mean, so these were matched against games' ratings on esrb.org. Some descriptors have
+// two codes from different eras of the ESRB's list; codes not listed here show as their number.
+const ESRB_RATINGS = {
+	0: ['EC', 'Early Childhood'], 10: ['E', 'Everyone'], 20: ['E10+', 'Everyone 10+'], 30: ['T', 'Teen'],
+	40: ['M', 'Mature 17+'], 50: ['AO', 'Adults Only 18+'], 60: ['RP', 'Rating Pending'],
+};
+const ESRB_DESCRIPTORS = {
+	0: 'Alcohol Reference', 1: 'Animated Blood', 2: 'Blood', 3: 'Blood and Gore', 4: 'Cartoon Violence',
+	5: 'Comic Mischief', 6: 'Crude Humor', 7: 'Drug Reference', 9: 'Fantasy Violence', 11: 'Intense Violence',
+	12: 'Language', 13: 'Lyrics', 14: 'Mature Humor', 15: 'Mild Violence', 16: 'Nudity', 17: 'Partial Nudity',
+	19: 'Sexual Themes', 20: 'Sexual Violence', 21: 'Simulated Gambling', 23: 'Strong Language', 24: 'Mild Lyrics',
+	25: 'Strong Sexual Content', 26: 'Suggestive Themes', 27: 'Tobacco Reference', 28: 'Use of Drugs',
+	29: 'Use of Alcohol', 30: 'Use of Tobacco', 31: 'Violence', 32: 'Sexual Content', 34: 'Mild Blood',
+	35: 'Mild Blood', 37: 'Mild Cartoon Violence', 41: 'Mild Fantasy Violence', 42: 'Mild Language',
+	43: 'Mild Lyrics', 48: 'Mild Sexual Themes', 51: 'Mild Suggestive Themes', 58: 'Violent References',
+	60: 'Use of Drugs and Alcohol', 61: 'Use of Alcohol and Tobacco', 62: 'Alcohol and Tobacco Reference',
+	63: 'Cartoon Violence', 64: 'Mild Cartoon Violence',
+};
+
+// Other regions' stores rate with PEGI, CERO and so on, whose codes are different, so they show as numbers.
+const ESRB_LOCALES = new Set(['en-us', 'en-ca', 'fr-ca']);
+const usesEsrb = () => ESRB_LOCALES.has(state.locale);
+
+function esrbRating(id) {
+	const rating = usesEsrb() && ESRB_RATINGS[id];
+	return rating ? `${rating[1]} (${rating[0]})` : '';
+}
+
+const esrbDescriptor = id => (usesEsrb() && ESRB_DESCRIPTORS[id]) || '';
 
 /* ---------- Full record ---------- */
 
 // Field names are camelCase in the XML; these read better spelled out.
 const FIELD_LABELS = {
 	id: 'ID', hexTitleId: 'Title ID (Hex)', hexOfferId: 'Offer ID (Hex)', titleId: 'Title ID', offerId: 'Offer ID',
+	ratingId: 'Age Rating', ratingDescriptors: 'Content Descriptors', ratingDescriptor: 'Content Descriptors',
 	productId: 'Product ID', contentId: 'Content ID', fileUrl: 'File URL', userRating: 'User Rating',
 	effectiveTitleId: 'Effective Title ID', parentProductId: 'Parent Product ID', pricetext: 'Price Text',
 	slideShows: 'Slideshow',
@@ -639,11 +708,20 @@ const fieldLabel = name => FIELD_LABELS[name] ?? name
 	.replace(/ (Of|For|On|In|To|And|Per|By)(?= )/g, w => w.toLowerCase())
 	.replace(/\b(id|url|hdtv)\b/gi, w => w.toUpperCase());
 
+// IDs in the feed are written as "urn:uuid:66acd000-…"; the prefix says nothing, so it's dropped.
+const stripUrn = text => text.replace(/^urn:uuid:/i, '');
+
 function fieldValue(name, text) {
+	text = stripUrn(text);
 	if (/^https?:\/\//.test(text)) {
 		return el('a', { href: text, target: '_blank', rel: 'noopener noreferrer', className: 'record-link' }, text);
 	}
 	if (name === 'productType') return `${typeName(text)} (${text})`;
+	if (name === 'paymentType' && PAYMENT_TYPES[text]) return `${PAYMENT_TYPES[text]} · ${text}`;
+	if (name === 'pricetext') return priceText(text);
+	if (name === 'gameRegion' && regionNames(text)) return `${regionNames(text)} · ${text}`;
+	if (name === 'ratingId' && esrbRating(text)) return `${esrbRating(text)} · ${text}`;
+	if (name === 'ratingDescriptor' && esrbDescriptor(text)) return `${esrbDescriptor(text)} · ${text}`;
 	if (/size$/i.test(name) && /^\d{4,}$/.test(text)) return `${formatBytes(text)} (${fmt.format(Number(text))} bytes)`;
 	if (/date$|^updated$/i.test(name) && text.startsWith('0000')) return 'Not set';
 	if (/^\d{4}-\d{2}-\d{2}T/.test(text)) return text.replace('T', ' ').replace(/(\.\d+)?Z?$/, '');
@@ -659,13 +737,13 @@ function itemName(node) {
 	for (const field of ITEM_NAME_FIELDS) {
 		// Only the item's own fields: a wrapper must not borrow the name of something nested inside it.
 		const text = Array.from(node.children).find(child => child.localName === field)?.textContent.trim();
-		if (text) return /^https?:\/\//.test(text) ? fileName(text) : text;
+		if (text) return /^https?:\/\//.test(text) ? fileName(text) : stripUrn(text);
 	}
 	// Nothing names it, so the row's number does the work: "01 Subscription".
 	return fieldLabel(node.localName);
 }
 
-const MONO_VALUE = /^(0x[0-9a-f]+|urn:uuid:\S+|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}|-?\d+(\.\d+)?)$/i;
+const MONO_VALUE = /^(0x[0-9a-f]+|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}|-?\d+(\.\d+)?)$/i;
 
 function specValue(name, text) {
 	const value = fieldValue(name, text);
@@ -691,7 +769,8 @@ const ownAttributes = node => Array.from(node.attributes).filter(a => !a.name.st
 // A value with no child elements, e.g. <ratingDescriptor level="1.0000">23</ratingDescriptor>; its attributes follow the text.
 function leafValue(node) {
 	const text = node.textContent.trim();
-	const attrs = ownAttributes(node);
+	// Every descriptor carries level="1.0000", which says nothing; any other level is kept.
+	const attrs = ownAttributes(node).filter(a => !(node.localName === 'ratingDescriptor' && a.localName === 'level' && Number(a.value) === 1));
 	if (!attrs.length) return text ? specValue(node.localName, text) : null;
 	const notes = attrs.map(a => `${fieldLabel(a.localName).toLowerCase()} ${/^-?\d+\.\d+$/.test(a.value) ? Number(a.value) : a.value.trim()}`);
 	return el('span', {}, text ? specValue(node.localName, text) : '', el('span', { className: 'spec-note' }, notes.join(' · ')));
@@ -758,7 +837,57 @@ function recordBody(node) {
 	return body;
 }
 
+/* ---------- Offers ---------- */
+
+// Read from the archive itself: type 1 prices carry the Microsoft Points sign (¤) and type 3 prices are
+// in dollars. Offers without a price label (all of type 2) are left out of the list.
+const PAYMENT_TYPES = { 1: 'Microsoft Points', 3: 'Cash' };
+const priceText = text => text.trim().replace(/(\d)¤$/, '$1 Points');
+
+// Xbox 360 region flags: each byte is a territory, and some bytes split further.
+const REGIONS = [
+	[0x000000ff, 'North America'], [0x00000100, 'Japan'], [0x00000200, 'China'], [0x0000fc00, 'Rest of Asia'],
+	[0x00010000, 'Australia & New Zealand'], [0x00fe0000, 'Europe'], [0xff000000, 'Rest of World'],
+];
+
+function regionNames(value) {
+	const mask = Number(value) >>> 0;
+	if (!Number.isFinite(Number(value))) return '';
+	if (mask === 0xffffffff) return 'All regions';
+	const names = REGIONS.filter(([bits]) => (mask & bits) >>> 0 === bits).map(([, name]) => name);
+	const partial = REGIONS.some(([bits]) => (mask & bits) && (mask & bits) >>> 0 !== bits);
+	return names.length ? names.join(', ') + (partial ? ' (and part of others)' : '') : '';
+}
+
+function offerSummary(offer) {
+	const type = tagText(offer, 'paymentType');
+	const tiers = tagAll(offer, 'tier').map(n => n.textContent.trim()).filter(Boolean);
+	return [
+		PAYMENT_TYPES[type] ?? (type && `Payment type ${type}`),
+		tiers.length && `Tier ${tiers.join(', ')}`,
+	].filter(Boolean).join(' · ');
+}
+
+// Offers sorted by how they're paid, then by tier, each summarised as price, payment and tier.
+function offerList(items) {
+	const key = o => [tagText(o, 'paymentType'), tagText(o, 'tier')].map(v => v.padStart(3, '0')).join();
+	const sorted = [...items].sort((a, b) => key(a).localeCompare(key(b)));
+	return sorted.map((offer, i) => {
+		const summary = el('summary', {},
+			el('span', { className: 'spec-item-index mono' }, String(i + 1).padStart(2, '0')),
+			el('span', { className: 'offer-head' },
+				el('span', { className: 'offer-price' }, priceText(tagText(offer, 'pricetext'))),
+				el('span', { className: 'offer-terms' }, offerSummary(offer))),
+			icon('chevron-down'));
+		return el('details', { className: 'spec-item' }, summary, recordBody(offer));
+	});
+}
+
 function groupBlock({ name, node, items }) {
+	if (name === 'offerInstances' && items) {
+		items = items.filter(offer => tagText(offer, 'pricetext'));
+		if (!items.length) return document.createDocumentFragment();
+	}
 	const head = el('h4', { className: 'spec-group-title' }, fieldLabel(name));
 	const block = el('div', { className: 'spec-group' }, head);
 	if (!items) {
@@ -781,6 +910,10 @@ function groupBlock({ name, node, items }) {
 		})));
 		return block;
 	}
+	if (name === 'offerInstances') {
+		block.append(...offerList(items));
+		return block;
+	}
 	block.append(...items.map((item, i) => {
 		const summary = el('summary', {},
 			el('span', { className: 'spec-item-index mono' }, String(i + 1).padStart(2, '0')),
@@ -791,37 +924,17 @@ function groupBlock({ name, node, items }) {
 	return block;
 }
 
-function fullRecordSection(entry, item) {
+function fullRecordPanel(entry, item) {
 	const { rows, groups } = recordParts(entry);
 	const sheet = el('div', { className: 'sheet' });
 	if (rows.length) sheet.append(specList(rows));
 	for (const group of groups) sheet.append(groupBlock(group));
-	const source = el('a', { href: recordUrl(item.id), target: '_blank', rel: 'noopener', className: 'record-source' }, icon('external'), 'View source XML');
-	const details = el('details', { className: 'record' },
-		el('summary', {},
-			el('span', { className: 'record-head' },
-				el('span', { className: 'record-title' }, 'Full Record'),
-				el('span', { className: 'record-sub' }, 'All data from the original marketplace listing')),
-			icon('chevron-down')),
+	return el('section', { className: 'section section-lead' },
+		el('div', { className: 'record-bar' },
+			el('p', { className: 'record-sub' }, 'All marketplace listing data'),
+			el('a', { href: recordUrl(item.id), target: '_blank', rel: 'noopener', className: 'record-source' }, icon('external'), 'Source XML')),
 		sheet,
-		source,
 	);
-	return el('section', { className: 'section' }, details);
-}
-
-function searchFor(query) {
-	closeDetail();
-	state.type = '';
-	setQuery(query);
-	update();
-	scroller().scrollTo({ top: 0 });
-}
-
-function syncDetailNav() {
-	const index = results.findIndex(item => item.id === state.item);
-	els.detailPrev.disabled = index <= 0;
-	els.detailNext.disabled = index === -1 || index >= results.length - 1;
-	els.detailPos.textContent = index === -1 ? '' : `${fmt.format(index + 1)} of ${fmt.format(results.length)}`;
 }
 
 function stepDetail(delta) {
@@ -910,27 +1023,71 @@ function prefetchNeighbours(id) {
 
 const wait = ms => new Promise(resolve => setTimeout(() => resolve(null), ms));
 
+// The tab survives stepping between items (← →), so someone comparing raw records can step through them.
+let detailTab = 'overview';
+let shownDetail = null;
+
+function setDetailTab(tab) {
+	detailTab = tab;
+	// Both tabs stay in the Tab order: the arrow keys already step between items, so they can't move between tabs.
+	for (const [name, button] of Object.entries(els.detailTabs)) button.setAttribute('aria-selected', String(name === tab));
+	els.detailBody.setAttribute('aria-labelledby', els.detailTabs[tab].id);
+}
+
 // outcome: { record } once loaded, { error } on failure, or null while still loading.
 function renderDetail(item, outcome) {
+	shownDetail = { item, outcome };
 	const title = outcome?.record?.title || item.title;
-	// Pills wrap as wholes, so on narrow screens the update time drops to its own line intact.
+	// What kind of item it is and when the listing last changed sit quietly at the foot of the panel.
 	const updated = formatUpdated(item.updated || (outcome?.record ? tagText(outcome.record.entry, 'updated') : ''));
-	els.detailMeta.replaceChildren(...[
+	els.detailFoot.hidden = false;
+	els.detailFoot.replaceChildren(
 		el('span', { className: 'pill pill-type' }, typeName(item.type)),
-		updated && el('span', { className: 'pill' }, icon('clock'), el('span', {}, 'Updated ', updated)),
-	].filter(Boolean).flatMap((pill, i) => i ? [el('span', { className: 'visually-hidden' }, ', '), pill] : [pill]));
+		updated ? el('span', {}, icon('clock'), 'Updated ', updated) : '',
+	);
 	els.detailTitle.textContent = title;
 	els.detailTitle.title = title;
-	let rest;
-	if (outcome?.record) rest = recordSections(outcome.record, item);
-	else if (outcome?.error) rest = [
-		el('p', { className: 'error-note' }, `${outcome.error.message} The identifiers above come from the index and are still accurate.`),
-		el('a', { href: recordUrl(item.id), target: '_blank', rel: 'noopener', className: 'record-source' }, icon('external'), 'Try the original XML'),
+	// Overview: what it is, then the identifiers people copy. Full Record: every field in the listing.
+	let sections;
+	if (outcome?.record) {
+		sections = detailTab === 'record'
+			? [fullRecordPanel(outcome.record.entry, item)]
+			: [...recordSections(outcome.record, item), idsSection(item)];
+	}
+	else if (outcome?.error) sections = [
+		el('section', { className: 'section section-lead' },
+			el('p', { className: 'error-note' }, `${outcome.error.message} The identifiers below come from the index and are still accurate.`),
+			el('a', { href: recordUrl(item.id), target: '_blank', rel: 'noopener', className: 'record-source' }, icon('external'), 'Try the original XML')),
+		idsSection(item),
 	];
-	else rest = [el('section', { className: 'section' },
-		el('div', { className: 'skeleton w60' }), el('div', { className: 'skeleton w80' }), el('div', { className: 'skeleton w60' }))];
-	els.detailBody.replaceChildren(idsSection(item), ...rest);
+	else sections = [
+		el('section', { className: 'section section-lead' },
+			el('div', { className: 'skeleton w60' }), el('div', { className: 'skeleton w80' }), el('div', { className: 'skeleton w60' })),
+		idsSection(item),
+	];
+	els.detailBody.replaceChildren(...sections);
 	resetDetailScroll();
+	requestAnimationFrame(clampDescription);
+}
+
+// Descriptions open as a two-line preview so every item's panel stays compact; the button shows the rest.
+const DESCRIPTION_LINES = 2;
+
+function clampDescription() {
+	const desc = els.detailBody.querySelector('.desc');
+	if (!desc || els.detail.hidden || desc.classList.contains('is-clamped') || desc.nextElementSibling) return;
+	const lineHeight = parseFloat(getComputedStyle(desc).lineHeight);
+	if (desc.clientHeight <= lineHeight * DESCRIPTION_LINES + 1) return;
+	desc.style.setProperty('--clamp', DESCRIPTION_LINES);
+	desc.classList.add('is-clamped');
+	const more = el('button', { type: 'button', className: 'link-btn' }, 'Show full description');
+	more.setAttribute('aria-expanded', 'false');
+	more.addEventListener('click', () => {
+		const open = desc.classList.toggle('is-clamped');
+		more.textContent = open ? 'Show full description' : 'Show less';
+		more.setAttribute('aria-expanded', String(!open));
+	});
+	desc.after(more);
 }
 
 // Jump back to the top for each item. Briefly switching overflow off also kills any
@@ -945,14 +1102,21 @@ function resetDetailScroll() {
 	});
 }
 
-async function openDetail(id, { push = true, focusClose = true } = {}) {
+async function openDetail(id, { push = true, focusClose = true, stack = false } = {}) {
 	const item = byId.get(id);
 	if (!item) return;
 	const wasOpen = !els.detail.hidden;
-	if (!wasOpen) lastFocus = document.activeElement;
+	if (!wasOpen) {
+		lastFocus = document.activeElement;
+		setDetailTab('overview');
+	}
 	state.item = id;
-	if (push) writeUrl(wasOpen ? 'replace' : 'push');
-	syncDetailNav();
+	if (push && stack && wasOpen) {
+		// An item opened straight from a shared link has no entry of its own, so it adds nothing to depth.
+		const depth = history.state?.detail ? history.state.depth ?? 1 : 0;
+		writeUrl('push', { detail: true, depth: depth + 1 });
+	}
+	else if (push) writeUrl(wasOpen ? 'replace' : 'push');
 	for (const tr of els.body.querySelectorAll('tr')) tr.classList.toggle('is-active', tr.dataset.id === id);
 
 	const token = ++detailToken;
@@ -992,7 +1156,7 @@ function closeDetail({ fromHistory = false } = {}) {
 			// Opening the item added a history entry; step back over it so Back does not reopen it.
 			// Anything that changes state before the step lands is re-applied in popstate.
 			pendingBack = true;
-			history.back();
+			history.go(-(history.state.depth ?? 1));
 		} else writeUrl();
 	}
 	setBackgroundInert(false);
@@ -1025,7 +1189,10 @@ function readUrl() {
 	state.offerOnly = params.get('offer') === '1';
 }
 
-function writeUrl(mode = 'replace') {
+// Each item opened from the list, or from another item's parent link, gets its own history entry.
+// `depth` counts how many of those sit on top of the list, so closing can step back over all of them,
+// while the browser's Back returns from a parent to the item it was opened from.
+function writeUrl(mode = 'replace', entry = { detail: true, depth: 1 }) {
 	const params = new URLSearchParams();
 	if (state.locale !== DEFAULT_LOCALE) params.set('locale', state.locale);
 	if (state.query) params.set('q', state.query);
@@ -1036,7 +1203,7 @@ function writeUrl(mode = 'replace') {
 	if (state.item) params.set('item', state.item);
 	const search = params.toString();
 	const url = search ? `?${search}` : location.pathname;
-	if (mode === 'push') history.pushState({ detail: true }, '', url);
+	if (mode === 'push') history.pushState(entry, '', url);
 	else history.replaceState(history.state, '', url);
 }
 
@@ -1348,8 +1515,13 @@ els.scrim.addEventListener('click', closeDetail);
 	head.addEventListener('touchcancel', end);
 }
 
-els.detailPrev.addEventListener('click', () => stepDetail(-1));
-els.detailNext.addEventListener('click', () => stepDetail(1));
+for (const [name, button] of Object.entries(els.detailTabs)) {
+	button.addEventListener('click', () => {
+		if (detailTab === name) return;
+		setDetailTab(name);
+		if (shownDetail) renderDetail(shownDetail.item, shownDetail.outcome);
+	});
+}
 
 function rowLinks() {
 	return [...els.body.querySelectorAll('.row-title')];
@@ -1610,7 +1782,7 @@ els.locale.addEventListener('change', () => {
 // Phones show just the locale code so the title keeps its room; wider screens show the full name.
 const compactLocales = matchMedia('(max-width: 768px)');
 function labelLocales() {
-	els.localeValue.textContent = compactLocales.matches ? state.locale : localeName(state.locale);
+	els.localeValue.textContent = compactLocales.matches ? state.locale : localeLongName(state.locale);
 	els.localeTrigger.title = localeLongName(state.locale);
 	els.localeTrigger.setAttribute('aria-label', `Marketplace locale: ${localeLongName(state.locale)}`);
 }
@@ -1694,6 +1866,7 @@ function closeLocaleMenu({ focusTrigger = true } = {}) {
 	if (els.localeMenu.hidden) return;
 	els.localeMenu.classList.remove('is-open');
 	els.localeMenu.hidden = true;
+	els.localeMenu.style.width = '';
 	els.localeTrigger.setAttribute('aria-expanded', 'false');
 	if (focusTrigger) els.localeTrigger.focus({ preventScroll: true });
 }
@@ -1713,7 +1886,11 @@ els.localeTrigger.addEventListener('keydown', event => {
 		openLocaleMenu();
 	}
 });
-els.localeFilter.addEventListener('input', renderLocaleList);
+els.localeFilter.addEventListener('input', () => {
+	// The menu sizes to its names; hold that width while filtering so it doesn't shrink under the cursor.
+	if (!els.localeMenu.style.width) els.localeMenu.style.width = `${els.localeMenu.offsetWidth}px`;
+	renderLocaleList();
+});
 els.localeMenu.addEventListener('keydown', event => {
 	const page = 6;
 	const keys = {

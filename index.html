@@ -160,20 +160,19 @@
     <div id="scrim" class="scrim" hidden></div>
     <aside id="detail" class="detail" role="dialog" aria-modal="true" aria-labelledby="detail-title" hidden>
       <div class="detail-head">
-        <div>
+        <div class="detail-heading">
           <h2 id="detail-title" class="detail-title">Item details</h2>
-          <p id="detail-meta" class="detail-meta"></p>
         </div>
         <button id="detail-close" type="button" class="icon-btn" aria-label="Close details">
           <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
         </button>
       </div>
-      <div id="detail-body" class="detail-body"></div>
-      <div class="detail-foot">
-        <button id="detail-prev" type="button" class="btn" title="Previous item (←)"><svg class="icon" aria-hidden="true"><use href="#i-left"/></svg><span>Previous</span></button>
-        <span id="detail-pos" class="detail-pos"></span>
-        <button id="detail-next" type="button" class="btn" title="Next item (→)"><span>Next</span><svg class="icon" aria-hidden="true"><use href="#i-right"/></svg></button>
+      <div class="detail-tabs" role="tablist" aria-label="Item view">
+        <button id="tab-overview" type="button" class="detail-tab" role="tab" aria-selected="true" aria-controls="detail-body">Overview</button>
+        <button id="tab-record" type="button" class="detail-tab" role="tab" aria-selected="false" aria-controls="detail-body">Full Record</button>
       </div>
+      <div id="detail-body" class="detail-body" role="tabpanel" aria-labelledby="tab-overview"></div>
+      <p id="detail-foot" class="detail-foot" hidden></p>
     </aside>
 
     <script src="index.js"></script>
