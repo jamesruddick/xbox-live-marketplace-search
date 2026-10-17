@@ -970,8 +970,11 @@ let touchY = 0;
 document.addEventListener('touchstart', event => { touchY = event.touches[0].clientY; }, { passive: true });
 document.addEventListener('touchmove', event => {
 	if (lockedScrollY === null) return;
+	// Measured per move, so a swipe that reverses direction is judged by where it's heading now.
 	const deltaY = touchY - event.touches[0].clientY;
-	if (!els.detail.querySelector('.detail-head').contains(event.target) && !detailCanScroll(event.target, deltaY)) event.preventDefault();
+	touchY = event.touches[0].clientY;
+	// The header is dragged by hand (see below), so the browser never gets to scroll or pull-to-refresh it.
+	if (!detailCanScroll(event.target, deltaY)) event.preventDefault();
 }, { passive: false });
 
 const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
@@ -994,6 +997,7 @@ window.addEventListener('scroll', () => {
 function setBackgroundInert(inert) {
 	for (const node of [els.header, els.main, els.footer]) node.inert = inert;
 	lockedScrollY = inert ? window.scrollY : null;
+	document.documentElement.classList.toggle('is-locked', inert);
 }
 
 let detailToken = 0;

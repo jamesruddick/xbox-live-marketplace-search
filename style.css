@@ -470,6 +470,9 @@ mark { background: var(--accent-mark); color: inherit; border-radius: 2px; }
 .to-top:hover { background: var(--bg-hover); border-color: var(--accent); color: var(--accent); }
 .to-top .icon { width: 20px; height: 20px; }
 
+/* No pull-to-refresh or scroll chaining from the item detail to the page behind it. */
+html.is-locked, html.is-locked body { overscroll-behavior-y: none; }
+
 .scrim { position: fixed; inset: 0; z-index: 20; background: rgba(5, 6, 8, 0.6); opacity: 0; transition: opacity 0.25s var(--ease); }
 .scrim.is-open { opacity: 1; }
 
