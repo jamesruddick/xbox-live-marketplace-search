@@ -43,14 +43,16 @@ a { color: inherit; }
 button, input, select { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* The results grow to fill the screen so short lists still leave the footer at the bottom. */
+.page { display: flex; flex-direction: column; min-height: 100dvh; }
+.page-body { flex: 1 0 auto; }
+.foot { flex: none; }
+
 @media (min-width: 769px) {
 	html, body { height: 100%; overflow: hidden; }
-	.page-body { flex: 1 0 auto; }
-	.foot { flex: none; }
 	.page {
-		display: flex;
-		flex-direction: column;
 		height: 100%;
+		min-height: 0;
 		overflow-y: auto;
 		overscroll-behavior: contain;
 		scrollbar-gutter: stable;
@@ -300,7 +302,6 @@ button, input, select { font: inherit; color: inherit; }
 .locale-trigger .dropdown-value { overflow: hidden; text-overflow: ellipsis; }
 .locale-trigger:disabled { opacity: 1; color: var(--text-2); }
 .locale-trigger:disabled:hover { background: var(--bg-input); border-color: var(--line-strong); }
-.locale-trigger:disabled .dropdown-chevron { display: none; }
 .locale-menu { display: flex; flex-direction: column; width: max-content; max-width: min(320px, calc(100vw - 32px)); padding: 0; overflow: hidden; }
 .locale-filter { position: relative; padding: 8px; border-bottom: 1px solid var(--line); }
 .locale-filter .icon { position: absolute; left: 19px; top: 18px; width: 15px; height: 15px; color: var(--text-3); pointer-events: none; }
@@ -367,7 +368,6 @@ button, input, select { font: inherit; color: inherit; }
 .c-title { width: auto; }
 .c-type { width: 176px; }
 .c-id { width: 128px; }
-.c-offer { width: 190px; }
 .c-content { width: 270px; }
 .c-date { width: 118px; }
 
@@ -609,15 +609,17 @@ html.is-locked, html.is-locked body { overscroll-behavior-y: none; }
 .ids { margin: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
 .id-row {
 	display: grid;
-	grid-template-columns: 84px minmax(0, 1fr) auto;
+	grid-template-columns: 124px minmax(0, 1fr) auto;
 	align-items: center;
 	gap: 10px;
 	padding: 2px 4px 2px 12px;
 	min-height: 36px;
 }
 .id-row + .id-row { border-top: 1px solid var(--line); }
-.id-row .label { color: var(--text-3); font-size: 13px; }
+.id-row .label { color: var(--text-3); font-size: 13px; white-space: nowrap; }
 .id-row .mono { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.id-row.is-group { grid-auto-rows: minmax(32px, auto); row-gap: 0; }
+.id-row.is-group .label { grid-row: span var(--rows); align-self: start; line-height: 32px; }
 .copy {
 	display: inline-flex;
 	align-items: center;
@@ -728,11 +730,8 @@ html.is-locked, html.is-locked body { overscroll-behavior-y: none; }
 	.filters { flex-wrap: wrap; overflow: visible; }
 	.filters-wrap::after { display: none; }
 }
-@media (max-width: 1280px) {
-	.c-content { display: none; }
-}
 @media (max-width: 980px) {
-	.c-offer { display: none; }
+	.c-content { display: none; }
 	.top-inner { gap: 18px; }
 }
 @media (max-width: 768px) {
@@ -785,9 +784,7 @@ html.is-locked, html.is-locked body { overscroll-behavior-y: none; }
 	.table td.c-date { grid-area: date; text-align: right; color: var(--text-3); font-size: 12px; }
 	.table td.c-tid { grid-area: tid; color: var(--text-3); font-size: 12px; }
 	.table td.c-tid::before { content: "·"; margin-right: 8px; font-family: var(--sans); }
-	.table tr[data-match="offer"] td.c-offer,
 	.table tr[data-match="content"] td.c-content { display: block; grid-row: 3; grid-column: 1 / -1; color: var(--text-3); font-size: 12px; }
-	.table tr[data-match="offer"] td.c-offer::before { content: "Offer ID "; font-family: var(--sans); }
 	.table tr[data-match="content"] td.c-content::before { content: "Content ID "; font-family: var(--sans); }
 	.table tbody tr:hover { background: none; }
 	.pager .btn { padding: 0 12px; }
@@ -833,6 +830,9 @@ html.is-locked, html.is-locked body { overscroll-behavior-y: none; }
 	.id-row .label { grid-area: label; font-size: 12px; }
 	.id-row .mono { grid-area: value; }
 	.id-row .copy { grid-area: copy; width: 36px; height: 30px; justify-content: center; padding: 0; }
+	.id-row.is-group { grid-template-areas: none; grid-auto-rows: auto; }
+	.id-row.is-group .label { grid-column: 1 / -1; grid-row: auto; line-height: 30px; }
+	.id-row.is-group .mono, .id-row.is-group .copy { grid-area: auto; }
 	.copy .icon { width: 16px; height: 16px; }
 	.copy .copy-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }

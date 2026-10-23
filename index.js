@@ -35,7 +35,7 @@ let localeDiscovery = null;
 const LOCALE_CACHE_KEY = 'xlm-search:locales';
 const LOCALE_CACHE_MS = 24 * 60 * 60 * 1000;
 
-const state = { locale: DEFAULT_LOCALE, query: '', type: '', sort: 'title', page: 1, item: '', offerOnly: false };
+const state = { locale: DEFAULT_LOCALE, query: '', type: '', sort: 'title', page: 1, item: '', contentOnly: false };
 
 const indexUrl = locale => `${ARCHIVE}/xbox-live-marketplace.${locale}.csv`;
 const recordUrl = id => `${ARCHIVE}/xbox-live-marketplace.${state.locale}/${id}.xml`;
@@ -76,7 +76,7 @@ const els = {
 	clear: $('search-clear'),
 	filters: $('type-filters'),
 	sort: $('sort-select'),
-	offerToggle: $('offer-toggle'),
+	contentToggle: $('content-toggle'),
 	localeTrigger: $('locale-trigger'),
 	localeValue: $('locale-value'),
 	localeMenu: $('locale-menu'),
@@ -122,8 +122,80 @@ let lastFocus = null;
 
 /* ---------- Loading ---------- */
 
-async function loadIndex(locale) {
-	const response = await fetch(indexUrl(locale));
+// Parsed indexes are kept in IndexedDB (each one is ~10 MB, too big for localStorage) so a repeat
+// visit skips both the download and the parse. Bump INDEX_FORMAT whenever buildItems changes shape.
+const DB_NAME = 'xlm-search';
+const DB_STORE = 'indexes';
+const INDEX_FORMAT = 2;
+let dbPromise = null;
+
+function openDb() {
+	dbPromise ??= new Promise((resolve, reject) => {
+		const request = indexedDB.open(DB_NAME, 1);
+		request.onupgradeneeded = () => request.result.createObjectStore(DB_STORE);
+		request.onsuccess = () => resolve(request.result);
+		request.onerror = () => reject(request.error);
+	}).catch(() => null); // Storage blocked or unavailable (some private modes): run without the cache.
+	return dbPromise;
+}
+
+async function withStore(mode, use) {
+	const db = await openDb();
+	if (!db) return undefined;
+	return new Promise((resolve, reject) => {
+		const tx = db.transaction(DB_STORE, mode);
+		const request = use(tx.objectStore(DB_STORE));
+		tx.oncomplete = () => resolve(request.result);
+		tx.onerror = tx.onabort = () => reject(tx.error);
+	});
+}
+
+async function readSavedIndex(locale) {
+	try {
+		const saved = await withStore('readonly', store => store.get(locale));
+		return saved?.format === INDEX_FORMAT && (saved.modified || saved.etag) ? saved : null;
+	} catch {
+		return null;
+	}
+}
+
+function saveIndex(locale, response, items) {
+	const modified = response.headers.get('last-modified');
+	const etag = response.headers.get('etag');
+	if (!modified && !etag) return; // Nothing to check freshness against later.
+	withStore('readwrite', store => store.put({ format: INDEX_FORMAT, modified, etag, items }, locale))
+		.catch(() => {}); // Over quota or storage blocked: the next visit simply downloads again.
+}
+
+// Asks the server whether the index changed since it was saved. GitHub Pages' CDN nodes disagree
+// on ETags for the same file, so If-Modified-Since is preferred; the ETag covers servers without it.
+function revalidation(saved) {
+	if (!saved) return {};
+	const headers = saved.modified ? { 'If-Modified-Since': saved.modified } : { 'If-None-Match': saved.etag };
+	return { cache: 'no-store', headers };
+}
+
+async function loadItems(locale, token) {
+	const saved = await readSavedIndex(locale);
+	let response;
+	try {
+		response = await fetch(indexUrl(locale), revalidation(saved));
+	} catch (error) {
+		if (saved) return saved.items; // Offline: the saved copy beats an error.
+		throw error;
+	}
+	if (saved && (response.status === 304 || (!response.ok && response.status !== 404))) return saved.items;
+
+	const text = await loadIndex(locale, response);
+	if (token !== loadToken) return null;
+	els.statusText.textContent = 'Indexing items…';
+	await new Promise(requestAnimationFrame);
+	const items = buildItems(parseCsv(text)).sort(SORTERS.title);
+	saveIndex(locale, response, items);
+	return items;
+}
+
+async function loadIndex(locale, response) {
 	if (response.status === 404) throw Object.assign(new Error(`The archive has no ${locale} index yet.`), { missing: true });
 	if (!response.ok) throw new Error(`The ${locale} index returned ${response.status}.`);
 
@@ -188,8 +260,11 @@ function buildItems(rows) {
 	const col = name => header.indexOf(name);
 	const c = {
 		id: col('id'), type: col('type'), title: col('title'), titleId: col('titleid'),
-		offerId: col('offerid'), contentId: col('contentid'), updated: col('lastupdated'),
+		effectiveTitleId: col('effectivetitleid'), offerIds: col('offerid'), contentIds: col('contentid'),
+		updated: col('lastupdated'),
 	};
+	// Items with several offers or content packages list them joined by dots.
+	const list = value => (value ? value.split('.').filter(Boolean) : []);
 	return rows
 		.filter(r => r.length > 1 && r[c.id])
 		.map(r => {
@@ -198,13 +273,14 @@ function buildItems(rows) {
 				type: r[c.type],
 				title: r[c.title] || '(untitled)',
 				titleId: r[c.titleId] || '',
-				offerId: r[c.offerId] || '',
-				contentId: r[c.contentId] || '',
+				effectiveTitleId: r[c.effectiveTitleId] || '',
+				offerIds: list(r[c.offerIds]),
+				contentIds: list(r[c.contentIds]),
 				updated: r[c.updated] || '',
 			};
 			// Leading punctuation ("! Aiko Theme", ";-) T-Shirt") should not decide the order.
 			item.sortTitle = item.title.toLowerCase().replace(/^[^\p{L}\p{N}]+/u, '') || '\uffff';
-			item.haystack = [item.title, item.id, item.titleId, item.offerId, item.contentId].join('\u0001').toLowerCase();
+			item.haystack = [item.title, item.id, item.titleId, item.effectiveTitleId, ...item.offerIds, ...item.contentIds].join('\u0001').toLowerCase();
 			return item;
 		});
 }
@@ -250,7 +326,7 @@ function update({ resetPage = true } = {}) {
 	const counts = {};
 	const matched = [];
 	for (const item of items) {
-		if (state.offerOnly && !item.offerId) continue;
+		if (state.contentOnly && !item.contentIds.length) continue;
 		if (terms.length && !matchesQuery(item, terms)) continue;
 		counts[item.type] = (counts[item.type] || 0) + 1;
 		if (!state.type || item.type === state.type) matched.push(item);
@@ -348,12 +424,12 @@ function renderResults(terms) {
 		const tr = document.createElement('tr');
 		tr.dataset.id = item.id;
 		tr.classList.toggle('is-active', item.id === state.item);
-		// Phones hide the Offer and Content ID columns; flag the row when the match is only in one of them.
+		const contentIds = item.contentIds.join(', ');
+		// Phones hide the Content ID column; flag the row when the match is only in it.
 		if (terms.length) {
 			const visible = `${item.title}\u0001${item.titleId}`.toLowerCase();
 			const hidden = terms.filter(t => !visible.includes(t));
-			if (hidden.some(t => item.offerId.toLowerCase().includes(t))) tr.dataset.match = 'offer';
-			else if (hidden.some(t => item.contentId.toLowerCase().includes(t))) tr.dataset.match = 'content';
+			if (hidden.some(t => contentIds.toLowerCase().includes(t))) tr.dataset.match = 'content';
 		}
 		const link = document.createElement('a');
 		link.className = 'row-title';
@@ -363,8 +439,7 @@ function renderResults(terms) {
 			cell('c-title', link),
 			cell('c-type', typeName(item.type)),
 			cell('mono c-id c-tid', item.titleId ? highlight(item.titleId, terms) : ''),
-			cell('mono c-id c-offer', item.offerId ? highlight(item.offerId, terms) : ''),
-			cell('mono c-id c-content', item.contentId ? highlight(item.contentId, terms) : ''),
+			cell('mono c-id c-content', contentIds ? highlight(contentIds, terms) : ''),
 			cell('mono c-date', item.updated.slice(0, 10)),
 		);
 		return tr;
@@ -391,8 +466,8 @@ function showStatus(kind, message, locale) {
 		h.textContent = 'No items match';
 		const p = document.createElement('p');
 		const typeLabel = TYPE_BY_ID[state.type]?.label ?? 'items';
-		p.textContent = state.offerOnly && !state.query
-			? `No ${typeLabel} in this locale have an Offer ID.`
+		p.textContent = state.contentOnly && !state.query
+			? `No ${typeLabel} in this locale have a Content ID.`
 			: !state.query
 			? `There are no ${typeLabel} in this locale.`
 			: state.type
@@ -407,7 +482,7 @@ function showStatus(kind, message, locale) {
 		};
 		if (state.type) action('Search all types', () => { state.type = ''; });
 		else if (state.query) action('Clear search', () => setQuery(''));
-		if (state.offerOnly) action('Include items without an Offer ID', () => { state.offerOnly = false; els.offerToggle.checked = false; });
+		if (state.contentOnly) action('Include items without a Content ID', () => { state.contentOnly = false; els.contentToggle.checked = false; });
 		els.status.append(h, p);
 		if (actions.children.length) els.status.append(actions);
 	} else if (kind === 'error') {
@@ -535,18 +610,21 @@ function idsSection(item) {
 	const rows = [
 		['Product ID', item.id],
 		['Title ID', item.titleId],
-		['Offer ID', item.offerId],
-		['Content ID', item.contentId],
-	].filter(([, v]) => v);
+		['Effective Title ID', item.effectiveTitleId !== item.titleId && item.effectiveTitleId],
+		['Offer ID', item.offerIds],
+		['Content ID', item.contentIds],
+	].map(([label, v]) => [label, [v].flat().filter(Boolean)]).filter(([, values]) => values.length);
+	// Several offers or content packages share one label, each value keeping its own copy button.
 	return el('section', { className: 'section' },
 		el('h3', {}, 'Identifiers'),
-		el('dl', { className: 'ids' }, ...rows.map(([label, value]) =>
-			el('div', { className: 'id-row' },
-				el('dt', { className: 'label' }, label),
-				el('dd', { className: 'mono' }, value),
-				copyButton(value, label),
-			),
-		)),
+		el('dl', { className: 'ids' }, ...rows.map(([label, values]) => {
+			const row = el('div', { className: values.length > 1 ? 'id-row is-group' : 'id-row' },
+				el('dt', { className: 'label' }, values.length > 1 ? `${label}s` : label),
+				...values.flatMap(value => [el('dd', { className: 'mono' }, value), copyButton(value, label)]),
+			);
+			row.style.setProperty('--rows', values.length);
+			return row;
+		})),
 	);
 }
 
@@ -1190,7 +1268,7 @@ function readUrl() {
 	state.sort = [...els.sort.options].some(o => o.value === params.get('sort')) ? params.get('sort') : 'title';
 	state.page = Math.max(1, parseInt(params.get('page'), 10) || 1);
 	state.item = params.get('item') ?? '';
-	state.offerOnly = params.get('offer') === '1';
+	state.contentOnly = params.get('content') === '1';
 }
 
 // Each item opened from the list, or from another item's parent link, gets its own history entry.
@@ -1202,7 +1280,7 @@ function writeUrl(mode = 'replace', entry = { detail: true, depth: 1 }) {
 	if (state.query) params.set('q', state.query);
 	if (state.type) params.set('type', state.type);
 	if (state.sort !== 'title') params.set('sort', state.sort);
-	if (state.offerOnly) params.set('offer', '1');
+	if (state.contentOnly) params.set('content', '1');
 	if (state.page > 1) params.set('page', state.page);
 	if (state.item) params.set('item', state.item);
 	const search = params.toString();
@@ -1225,20 +1303,20 @@ window.addEventListener('popstate', () => {
 	const previousType = state.type;
 	const previousSort = state.sort;
 	const previousPage = state.page;
-	const previousOfferOnly = state.offerOnly;
+	const previousContentOnly = state.contentOnly;
 	readUrl();
 	if (state.locale !== previousLocale) {
 		closeDetail({ fromHistory: true });
 		setQuery(state.query);
 		els.sort.value = state.sort;
-		els.offerToggle.checked = state.offerOnly;
+		els.contentToggle.checked = state.contentOnly;
 		loadLocale({ openItem: state.item });
 		return;
 	}
-	if (state.query !== previousQuery || state.type !== previousType || state.sort !== previousSort || state.page !== previousPage || state.offerOnly !== previousOfferOnly) {
+	if (state.query !== previousQuery || state.type !== previousType || state.sort !== previousSort || state.page !== previousPage || state.contentOnly !== previousContentOnly) {
 		setQuery(state.query);
 		els.sort.value = state.sort;
-		els.offerToggle.checked = state.offerOnly;
+		els.contentToggle.checked = state.contentOnly;
 		update({ resetPage: false });
 	}
 	if (state.item) openDetail(state.item, { push: false });
@@ -1290,8 +1368,8 @@ els.filters.addEventListener('keydown', event => {
 	next.click();
 });
 
-els.offerToggle.addEventListener('change', () => {
-	state.offerOnly = els.offerToggle.checked;
+els.contentToggle.addEventListener('change', () => {
+	state.contentOnly = els.contentToggle.checked;
 	update();
 	scrollToResults();
 });
@@ -1615,13 +1693,27 @@ function setDocked(on) {
 function syncDockHeight() {
 	document.documentElement.style.setProperty('--dock-h', docked ? `${dock.offsetHeight}px` : '0px');
 }
+// A scroll counts as the user's while a finger is on the screen, and keeps counting through the
+// momentum frames that follow; scrolls the page makes itself (a shrinking list) never do.
+let touchedAt = 0;
+let userScrolledAt = 0;
+const markTouch = () => { touchedAt = performance.now(); };
+window.addEventListener('touchmove', markTouch, { passive: true });
+window.addEventListener('touchend', markTouch, { passive: true });
+function userScrolling() {
+	const now = performance.now();
+	if (now - touchedAt < 150 || now - userScrolledAt < 150) userScrolledAt = now;
+	return userScrolledAt === now;
+}
 // Docked once the slot has scrolled off the top; stays docked while typing, so a shrinking result
-// list can't yank the focused box back up to the header mid-word.
-function syncDock() {
+// list can't yank the focused box back up to the header mid-word. Scrolling back up by hand still
+// returns it to the header.
+function syncDock(event) {
 	if (desktopLayout.matches) return;
 	const top = dockSlot.getBoundingClientRect().top;
 	const past = top + (docked ? slotHeight : dockSlot.offsetHeight) <= 0;
-	setDocked(past || (docked && document.activeElement === els.search));
+	const byUser = event?.type === 'scroll' && userScrolling();
+	setDocked(past || (docked && document.activeElement === els.search && !byUser));
 	if (!docked) return;
 	// Docked only because the box is focused, with its slot on screen (typing shrank the list to the
 	// top of the page): collapse the slot rather than show an empty gap. Restore it once scrolled past,
@@ -1733,24 +1825,21 @@ async function loadLocale({ openItem = '', focus = false } = {}) {
 		els.sort.disabled = true;
 		els.sortTrigger.disabled = true;
 		els.localeTrigger.disabled = true;
-		els.offerToggle.disabled = true;
+		els.contentToggle.disabled = true;
 		els.table.hidden = true;
 		els.pager.hidden = true;
 		els.count.textContent = `Loading the ${locale} index…`;
 		els.status.hidden = false;
 		els.status.replaceChildren(
-			el('div', { className: 'progress' }, els.progress),
+			el('div', { className: 'progress is-indeterminate' }, els.progress),
 			els.statusText,
 		);
-		els.progress.style.width = '0';
-		els.statusText.textContent = `Downloading the ${locale} index…`;
+		els.progress.style.width = '';
+		els.statusText.textContent = `Loading the ${locale} index…`;
 		renderFilters({}, 0);
 		try {
-			const text = await loadIndex(locale);
-			if (token !== loadToken) return;
-			els.statusText.textContent = 'Indexing items…';
-			await new Promise(requestAnimationFrame);
-			const list = buildItems(parseCsv(text)).sort(SORTERS.title);
+			const list = await loadItems(locale, token);
+			if (token !== loadToken || !list) return;
 			indexCache.set(locale, { items: list, byId: new Map(list.map(item => [item.id, item])) });
 		} catch (error) {
 			if (token !== loadToken) return;
@@ -1766,7 +1855,7 @@ async function loadLocale({ openItem = '', focus = false } = {}) {
 	els.sort.disabled = false;
 	els.sortTrigger.disabled = false;
 	els.localeTrigger.disabled = false;
-	els.offerToggle.disabled = false;
+	els.contentToggle.disabled = false;
 	update({ resetPage: false });
 	if (openItem && byId.has(openItem)) openDetail(openItem, { push: false });
 	else if (openItem) { state.item = ''; writeUrl(); }
@@ -1985,7 +2074,7 @@ async function checkArchiveLocales() {
 	renderLocales();
 	setQuery(state.query);
 	els.sort.value = state.sort;
-	els.offerToggle.checked = state.offerOnly;
+	els.contentToggle.checked = state.contentOnly;
 	loadLocale({
 		openItem: state.item,
 		focus: !state.query && desktopLayout.matches,
