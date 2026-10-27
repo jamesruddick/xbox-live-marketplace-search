@@ -673,6 +673,12 @@ html.is-locked, html.is-locked body { overscroll-behavior-y: none; }
 .spec-long.is-clamped { display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .spec dd .link-btn { display: block; margin-top: 4px; padding: 2px 0; font-size: 13px; }
 .spec-note { margin-left: 8px; color: var(--text-3); font-size: 12px; }
+.spec dd .parent-link { display: inline; margin: 0; padding: 0; font: inherit; text-align: left; }
+.spec-id { display: block; margin-top: 2px; color: var(--text-3); font-size: 12px; }
+.spec-copy { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; }
+.spec-copy .copy { flex: none; height: 24px; margin: -4px 0; padding: 0 5px; }
+.spec-copy .copy .icon { width: 14px; height: 14px; }
+.spec-copy .copy-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .spec-values { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
 .record-empty { margin: 0; padding: 8px 0; color: var(--text-3); font-size: 13px; }
 
@@ -835,6 +841,7 @@ html.is-locked, html.is-locked body { overscroll-behavior-y: none; }
 	.id-row.is-group .mono, .id-row.is-group .copy { grid-area: auto; }
 	.copy .icon { width: 16px; height: 16px; }
 	.copy .copy-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+	.spec-copy .copy { width: 36px; height: 30px; margin: -7px 0; justify-content: center; padding: 0; }
 }
 
 @media (max-width: 560px) {
@@ -851,8 +858,8 @@ html.is-locked, html.is-locked body { overscroll-behavior-y: none; }
 }
 
 @media (max-width: 400px) {
-	/* Without the clock, the type and update time fit on one footer line at iPhone SE width. */
-	.detail-foot .icon { display: none; }
+	/* The clock stands in for the word "Updated" so the longest type names fit on one footer line at iPhone SE width. */
+	.detail-foot .foot-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 	:root { --gutter: 16px; }
 	.wide-label { display: none; }
 	.narrow-label { display: inline; }

@@ -770,13 +770,13 @@ const esrbDescriptor = id => (usesEsrb() && ESRB_DESCRIPTORS[id]) || '';
 // Field names are camelCase in the XML; these read better spelled out.
 const FIELD_LABELS = {
 	id: 'ID', hexTitleId: 'Title ID (Hex)', hexOfferId: 'Offer ID (Hex)', titleId: 'Title ID', offerId: 'Offer ID',
-	ratingId: 'Age Rating', ratingDescriptors: 'Content Descriptors', ratingDescriptor: 'Content Descriptors',
+	ratingId: 'Age Rating', ratingDescriptors: 'Content Descriptors', ratingDescriptor: 'Content Descriptors', ratingDisclaimers: 'Rating Disclaimers',
 	productId: 'Product ID', contentId: 'Content ID', fileUrl: 'File URL', userRating: 'User Rating',
-	effectiveTitleId: 'Effective Title ID', parentProductId: 'Parent Product ID', pricetext: 'Price Text',
-	slideShows: 'Slideshow',
+	effectiveTitleId: 'Effective Title ID', hexEffectiveTitleId: 'Effective Title ID (Hex)', parentProductId: 'Parent Product ID', pricetext: 'Price Text',
+	slideShows: 'Slideshow', videoPreviewInstances: 'Videos', relatedUrls: 'Manual',
 };
 // A repeated group's items are named after their most telling field.
-const ITEM_NAME_FIELDS = ['categoryName', 'fullTitle', 'reducedTitle', 'parentReducedTitle', 'ratingDisclaimerText', 'storeName', 'pricetext', 'offerId', 'fileUrl', 'relatedUrl'];
+const ITEM_NAME_FIELDS = ['categoryName', 'fullTitle', 'reducedTitle', 'parentReducedTitle', 'storeName', 'pricetext', 'offerId', 'fileUrl', 'relatedUrl'];
 const SKIPPED_FIELDS = new Set(['content', 'itemNum']);
 
 const fieldLabel = name => FIELD_LABELS[name] ?? name
@@ -791,10 +791,8 @@ const stripUrn = text => text.replace(/^urn:uuid:/i, '');
 
 function fieldValue(name, text) {
 	text = stripUrn(text);
-	if (/^https?:\/\//.test(text)) {
-		return el('a', { href: text, target: '_blank', rel: 'noopener noreferrer', className: 'record-link' }, text);
-	}
-	if (name === 'productType') return `${typeName(text)} (${text})`;
+	if (/^https?:\/\//.test(text)) return recordLink(text, text);
+	if (name === 'productType') return `${typeName(text)} · ${text}`;
 	if (name === 'paymentType' && PAYMENT_TYPES[text]) return `${PAYMENT_TYPES[text]} · ${text}`;
 	if (name === 'pricetext') return priceText(text);
 	if (name === 'gameRegion' && regionNames(text)) return `${regionNames(text)} · ${text}`;
@@ -811,6 +809,8 @@ function fileName(url) {
 	try { return decodeURIComponent(name) || url; } catch { return name || url; }
 }
 
+const recordLink = (url, text) => el('a', { href: url, target: '_blank', rel: 'noopener noreferrer', className: 'record-link' }, text);
+
 function itemName(node) {
 	for (const field of ITEM_NAME_FIELDS) {
 		// Only the item's own fields: a wrapper must not borrow the name of something nested inside it.
@@ -822,10 +822,16 @@ function itemName(node) {
 }
 
 const MONO_VALUE = /^(0x[0-9a-f]+|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}|-?\d+(\.\d+)?)$/i;
+// Identifiers get a copy button, as on the Overview: GUIDs and hex IDs, plus title IDs and content IDs by name.
+const COPY_VALUE = /^(0x[0-9a-f]+|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12})$/i;
+const COPY_FIELDS = new Set(['titleId', 'effectiveTitleId', 'contentId']);
 
 function specValue(name, text) {
 	const value = fieldValue(name, text);
 	if (typeof value !== 'string') return value;
+	if (COPY_VALUE.test(value) || COPY_FIELDS.has(name)) {
+		return el('span', { className: 'spec-copy' }, el('span', { className: 'mono' }, value), copyButton(value, fieldLabel(name)));
+	}
 	if (MONO_VALUE.test(value)) return el('span', { className: 'mono' }, value);
 	if (value.length <= 240) return value;
 	const long = el('span', { className: 'spec-long is-clamped' }, value);
@@ -850,7 +856,7 @@ function leafValue(node) {
 	// Every descriptor carries level="1.0000", which says nothing; any other level is kept.
 	const attrs = ownAttributes(node).filter(a => !(node.localName === 'ratingDescriptor' && a.localName === 'level' && Number(a.value) === 1));
 	if (!attrs.length) return text ? specValue(node.localName, text) : null;
-	const notes = attrs.map(a => `${fieldLabel(a.localName).toLowerCase()} ${/^-?\d+\.\d+$/.test(a.value) ? Number(a.value) : a.value.trim()}`);
+	const notes = attrs.map(a => `${fieldLabel(a.localName)} ${/^-?\d+\.\d+$/.test(a.value) ? Number(a.value) : a.value.trim()}`);
 	return el('span', {}, text ? specValue(node.localName, text) : '', el('span', { className: 'spec-note' }, notes.join(' · ')));
 }
 
@@ -937,13 +943,247 @@ function regionNames(value) {
 	return names.length ? names.join(', ') + (partial ? ' (and part of others)' : '') : '';
 }
 
+// Xbox Live membership tiers, and the avatar bodies an item fits (a bit each, so 3 is both).
+const TIERS = { 2: 'Silver', 3: 'Gold' };
+const AVATAR_BODIES = { 1: 'Male', 2: 'Female', 3: 'Male & Female' };
+const tierNames = tiers => tiers.map(t => TIERS[t] ?? `Tier ${t}`).join(', ');
+
 function offerSummary(offer) {
 	const type = tagText(offer, 'paymentType');
 	const tiers = tagAll(offer, 'tier').map(n => n.textContent.trim()).filter(Boolean);
 	return [
 		PAYMENT_TYPES[type] ?? (type && `Payment type ${type}`),
-		tiers.length && `Tier ${tiers.join(', ')}`,
+		tiers.length && tierNames(tiers),
 	].filter(Boolean).join(' · ');
+}
+
+// Targets come one per media type × body × tier × store, so a game sold to Silver and Gold is two
+// near-identical entries. They're merged into one row per media type, listing who it's offered to.
+function targetTypeRows(items) {
+	const byMedia = new Map();
+	for (const target of items) {
+		const media = tagText(target, 'mediaType');
+		const body = tagText(target, 'avatarBodyType'), store = tagText(target, 'stores');
+		if (!byMedia.has(media)) byMedia.set(media, new Map());
+		const variants = byMedia.get(media);
+		const key = `${body}/${store}`;
+		if (!variants.has(key)) variants.set(key, { body, store, tiers: new Set() });
+		variants.get(key).tiers.add(tagText(target, 'tiers'));
+	}
+	const stores = new Set(items.map(target => tagText(target, 'stores')));
+	return [...byMedia].sort(([a], [b]) => Number(a) - Number(b)).map(([media, variants]) => {
+		const lines = [...variants.values()].map(({ body, store, tiers }) => {
+			const notes = [
+				body && body !== '0' && `${AVATAR_BODIES[body] ? `${AVATAR_BODIES[body]} Body` : 'Body Type'} (${body})`,
+				stores.size > 1 && `Store ${store}`,
+			].filter(Boolean).join(' · ');
+			const tierList = [...tiers].filter(Boolean).sort();
+			return el('span', {}, tierList.length ? tierNames(tierList) : 'Any Tier', notes && el('span', { className: 'spec-note' }, notes));
+		});
+		const label = el('span', {}, typeName(media), el('span', { className: 'spec-note mono' }, media));
+		return [label, lines.length === 1 ? lines[0] : el('ul', { className: 'spec-values' }, ...lines.map(line => el('li', {}, line)))];
+	}).concat(stores.size === 1 ? [['Store', specValue('stores', [...stores][0])]] : []);
+}
+
+// Subscriptions are a tier and store each, often repeated, so they're merged into the tiers per store.
+// Every one in the archive has subscriptionExists 1; anything else is noted.
+function subscriptionRows(items) {
+	const byStore = new Map();
+	for (const sub of items) {
+		const store = tagText(sub, 'stores');
+		if (!byStore.has(store)) byStore.set(store, new Set());
+		byStore.get(store).add(tagText(sub, 'tiers'));
+	}
+	const rows = [...byStore].map(([store, tiers]) => {
+		const tierList = [...tiers].filter(Boolean).sort();
+		return [byStore.size > 1 ? `Store ${store}` : 'Tiers', tierList.length ? tierNames(tierList) : 'Any Tier'];
+	});
+	if (byStore.size === 1) rows.push(['Store', specValue('stores', [...byStore.keys()][0])]);
+	const exists = new Set(items.map(sub => tagText(sub, 'subscriptionExists')));
+	if ([...exists].some(v => v !== '1')) rows.push([fieldLabel('subscriptionExists'), [...exists].join(', ')]);
+	return rows;
+}
+
+/* ---------- Images ---------- */
+
+// The same few file names recur across the archive, so each gets a plain name.
+const IMAGE_NAMES = {
+	boxartlg: 'Box Art (Large)', boxartsm: 'Box Art (Small)', banner: 'Banner', tile: 'Tile', background: 'Background',
+	thumblg: 'Thumbnail (Large)', thumbm: 'Thumbnail (Medium)', thumbsm: 'Thumbnail (Small)',
+	webboxart: 'Web Box Art', xboxboxart: 'Xbox Box Art', tvposterlg: 'TV Poster (Large)', tvpostersm: 'TV Poster (Small)',
+	providerlogo: 'Provider Logo',
+};
+// Files named by a code ("8000", "4541091480000a84") are named from their relationship type and size
+// instead, which match the named files throughout the archive (every boxartlg.jpg is 33 and 23).
+const IMAGE_CODES = {
+	'33/23': 'Box Art (Large)', '33/30': 'Box Art (Small)', '27/15': 'Banner', '23/14': 'Tile', '25/22': 'Background',
+	'25/13': 'Background', '15/25': 'Thumbnail (Large)', '15/32': 'Thumbnail (Medium)', '15/14': 'Thumbnail (Small)',
+	'33/25': 'TV Poster (Large)', '33/45': 'TV Poster (Small)', '33/46': 'Provider Logo',
+};
+// Images are listed in this order: box art first, then dashboard art, then the rest.
+const IMAGE_ORDER = [...new Set(Object.values(IMAGE_NAMES))];
+const IMAGE_FORMATS = { 4: 'JPEG', 5: 'PNG' };
+
+// Parent products in the record's own order, with the title from the index when it's there.
+const parentId = node => stripUrn(tagText(node, 'parentProductId')).toLowerCase();
+const parentTitle = node => byId.get(parentId(node))?.title || tagText(node, 'parentReducedTitle') || parentId(node);
+const byParentOrder = (a, b) => (Number(tagText(a, 'parentSortOrder')) || 0) - (Number(tagText(b, 'parentSortOrder')) || 0);
+
+// One row per image: what it is, then a link to the file and its format. Images are listed in
+// IMAGE_ORDER; an add-on's images for several games are grouped by game, each one naming it.
+function imageRows(items, selfId, slideshow) {
+	const images = items.flatMap(n => (n.localName === 'image' ? [n] : tagAll(n, 'image')));
+	const file = image => (tagText(image, 'fileUrl') ? fileName(tagText(image, 'fileUrl')) : '');
+	const kind = image => IMAGE_NAMES[file(image).replace(/\.\w+$/, '').toLowerCase()]
+		?? IMAGE_CODES[`${tagText(image, 'relationshipType')}/${tagText(image, 'size')}`];
+	// An image for the item itself counts as its own, the same as one with no parent given.
+	const parentOf = image => {
+		const id = stripUrn(tagText(image, 'parentGameMediaId')).toLowerCase();
+		return id === selfId ? '' : id;
+	};
+	const parentNodes = images.length ? tagAll(images[0].ownerDocument, 'parentProduct').toSorted(byParentOrder) : [];
+	const parents = new Map(parentNodes.map(node => [parentId(node), parentTitle(node)]));
+	const parentIds = [...parents.keys()];
+	const showParent = new Set(images.map(parentOf).filter(Boolean)).size > 1;
+	if (slideshow) {
+		images.sort((a, b) => Number(tagText(a, 'displayOrder')) - Number(tagText(b, 'displayOrder')));
+	} else {
+		const rank = (list, value) => (list.includes(value) ? list.indexOf(value) : list.length);
+		images.sort((a, b) =>
+			(parentOf(a) ? rank(parentIds, parentOf(a)) : -1) - (parentOf(b) ? rank(parentIds, parentOf(b)) : -1)
+			|| rank(IMAGE_ORDER, kind(a)) - rank(IMAGE_ORDER, kind(b))
+			|| file(a).localeCompare(file(b)));
+	}
+	return images.map((image, i) => {
+		const url = tagText(image, 'fileUrl');
+		const label = slideshow ? `Screenshot ${i + 1}` : kind(image) ?? (file(image) || `Image ${i + 1}`);
+		const format = IMAGE_FORMATS[tagText(image, 'format')];
+		const link = url ? recordLink(url, file(image)) : 'No file';
+		const parent = showParent && parentOf(image) && `For ${parents.get(parentOf(image)) ?? parentOf(image)}`;
+		return [label, el('span', {}, link, format && el('span', { className: 'spec-note' }, format), parent && el('span', { className: 'spec-id' }, parent))];
+	});
+}
+
+// Every preview in the archive is one SD WMV stream, but each is still described from its own fields.
+function videoRows(items) {
+	return items.map((video, i) => {
+		const links = tagAll(video, 'fileUrl').map(n => n.textContent.trim()).filter(Boolean)
+			.map(url => recordLink(url, fileName(url)));
+		const encoding = [tagText(video, 'videoEncoding'), tagText(video, 'audioEncoding')].filter(Boolean).join(' / ');
+		const notes = [tagText(video, 'videoDefinition'), encoding, tagText(video, 'aspectRatio'), tagText(video, 'resolution')].filter(Boolean).join(' · ');
+		const files = links.length > 1 ? el('ul', { className: 'spec-values' }, ...links.map(link => el('li', {}, link))) : links[0] ?? 'No file';
+		return [items.length > 1 ? `Preview ${i + 1}` : 'Preview', el('span', {}, files, notes && el('span', { className: 'spec-note' }, notes))];
+	});
+}
+
+// Related URLs are all type 3 in the archive: the game's manual, nearly always a PDF.
+const RELATED_URL_TYPES = { 3: 'Manual' };
+
+function relatedUrlRows(items) {
+	return items.map(item => {
+		const type = tagText(item, 'relatedUrlType');
+		const url = Array.from(item.children).find(child => child.localName === 'relatedUrl')?.textContent.trim() ?? '';
+		const file = url ? fileName(url) : '';
+		const ext = /\.(\w{2,4})$/.exec(file)?.[1];
+		const link = url ? recordLink(url, file) : 'No link';
+		return [RELATED_URL_TYPES[type] ?? `Link (type ${type})`, el('span', {}, link, ext && el('span', { className: 'spec-note' }, ext.toUpperCase()))];
+	});
+}
+
+// One row per parent, named by its type, opening it when it's in the index. A game lists itself as
+// its own parent, which is marked as this item rather than linked.
+function parentRows(items, selfId) {
+	return items.toSorted(byParentOrder).map(parent => {
+		const id = parentId(parent);
+		const known = byId.get(id);
+		const name = parentTitle(parent);
+		let title;
+		if (id === selfId) {
+			title = el('span', {}, name, el('span', { className: 'spec-note' }, 'This item'));
+		} else if (known) {
+			title = el('button', { type: 'button', className: 'link-btn parent-link' }, name);
+			title.addEventListener('click', () => openDetail(id, { stack: true }));
+		} else {
+			title = el('span', {}, name, el('span', { className: 'spec-note' }, 'Not in this locale'));
+		}
+		return [known ? typeName(known.type) : 'Parent Product', el('span', {}, title, id && el('span', { className: 'spec-id' }, specValue('parentProductId', id)))];
+	});
+}
+
+/* ---------- Game capabilities ---------- */
+
+// Player counts come as Min/Max pairs and are shown as one range.
+const PLAYER_RANGES = [
+	['offlinePlayers', 'Offline Players'], ['offlineCoopPlayers', 'Offline Co-op'], ['offlineSystemLink', 'System Link'],
+	['onlineMultiplayer', 'Online Multiplayer'], ['onlineCoopPlayers', 'Online Co-op'],
+];
+// 0/1 flags: what the game supports, and which modes need a hard drive.
+const FEATURE_FLAGS = {
+	offlineDolbyDigital: 'Dolby Digital', offlineCustomSoundtracks: 'Custom Soundtracks', offlineVoiceCommands: 'Voice Commands',
+	offlinePeripheralCamera: 'Camera', offlinePeripheralFlightStick: 'Flight Stick', offlinePeripheralArcadeStick: 'Arcade Stick',
+	offlinePeripheralWheel: 'Racing Wheel', offlinePeripheralForceFeedbackWheel: 'Force Feedback Wheel', offlinePeripheralDancePad: 'Dance Pad',
+	onlineVoice: 'Voice Chat', onlineLeaderboards: 'Leaderboards', onlineContentDownload: 'Content Download',
+};
+const HARD_DRIVE_FLAGS = {
+	onlineHardDriveRequired: 'Online Play', onlineMultiplayerHardDriveRequired: 'Online Multiplayer',
+	onlineCoopHardDriveRequired: 'Online Co-op', offlineCoopHardDriveRequired: 'Offline Co-op',
+};
+// PC sizes carry a unit ID beside them; the values seen fit 3 = MB and 4 = GB.
+const SIZE_UNITS = { 3: 'MB', 4: 'GB' };
+const PC_SIZES = [
+	['pcSystemMemoryAmount', 'System Memory'], ['pcVideoMemoryAmount', 'Video Memory'], ['pcHardDriveStorageAmount', 'Hard Drive Space'],
+];
+// The feed writes PC numbers as "2.000000000000000e+000".
+const plainNumber = text => (Number.isFinite(Number(text)) ? fmt.format(Number(text)) : text);
+
+function capabilityRows(node) {
+	const fields = new Map(Array.from(node.children).filter(c => !c.children.length).map(c => [c.localName, c.textContent.trim()]));
+	const take = name => {
+		const value = fields.get(name) ?? '';
+		fields.delete(name);
+		return value;
+	};
+	const rows = [];
+	for (const [key, label] of PLAYER_RANGES) {
+		const min = take(`${key}Min`), max = take(`${key}Max`);
+		if (!min && !max) continue;
+		// A few records give a max below the min (e.g. min 2, max 0); only the min is shown then.
+		const low = Number(min), high = Number(max);
+		const range = !min || !max || high <= low ? (min && low ? min : max) : `${min}–${max}`;
+		rows.push([label, `${range} ${range === '1' ? 'Player' : 'Players'}`]);
+	}
+	const hdtv = take('offlineMaxHDTVModeId');
+	if (hdtv) rows.push(['Max HDTV Mode', el('span', { className: 'mono' }, hdtv)]);
+
+	const flagged = flags => Object.entries(flags).map(([key, label]) => [label, take(key)]).filter(([, v]) => v !== '');
+	const features = flagged(FEATURE_FLAGS);
+	// Only enabled flags are listed: some records spell out every flag as 0 and others omit the 0s,
+	// so a 0 carries no more meaning than a missing flag.
+	const supported = features.filter(([, v]) => v === '1').map(([label]) => label);
+	const tags = labels => el('ul', { className: 'tags' }, ...labels.map(label => el('li', {}, label)));
+	if (supported.length) rows.push(['Supports', tags(supported)]);
+	const needed = flagged(HARD_DRIVE_FLAGS).filter(([, v]) => v === '1').map(([label]) => label);
+	if (needed.length) rows.push(['Hard Drive Required', tags(needed)]);
+
+	const processors = ['1', '2'].map(n => [take(`pcProcessorType${n}`), take(`pcProcessorSpeed${n}`)])
+		.filter(([type, speed]) => type || speed)
+		.map(([type, speed]) => [type && `Type ${type}`, speed && `${plainNumber(speed)} GHz`].filter(Boolean).join(' · '));
+	if (processors.length) rows.push(['Processor', processors.length === 1 ? processors[0] : el('ul', { className: 'spec-values' }, ...processors.map(p => el('li', {}, p)))]);
+	for (const [key, label] of PC_SIZES) {
+		const amount = take(key), unit = take(`${key}UnitId`);
+		if (amount) rows.push([label, `${plainNumber(amount)} ${SIZE_UNITS[unit] ?? (unit && `(unit ${unit})`)}`.trim()]);
+	}
+	const cards = ['1', '2'].map(n => take(`pcVideoCardType${n}`)).filter(Boolean);
+	if (cards.length) rows.push(['Video Card', cards.map(t => `Type ${t}`).join(', ')]);
+	for (const [key, label] of [['pcSoundCardType', 'Sound Card'], ['pcWindowsOSType', 'Windows Version'], ['pcDirectXType', 'DirectX Version']]) {
+		const type = take(key);
+		if (type) rows.push([label, `Type ${type}`]);
+	}
+	if (take('pcNetworkRequirements') === '1') rows.push(['Network Connection', 'Required']);
+
+	// Anything not covered above is listed as it comes.
+	for (const [name, text] of fields) if (text) rows.push([fieldLabel(name), specValue(name, /e[+-]\d+$/.test(text) ? plainNumber(text) : text)]);
+	return rows;
 }
 
 // Offers sorted by how they're paid, then by tier, each summarised as price, payment and tier.
@@ -969,7 +1209,40 @@ function groupBlock({ name, node, items }) {
 	const head = el('h4', { className: 'spec-group-title' }, fieldLabel(name));
 	const block = el('div', { className: 'spec-group' }, head);
 	if (!items) {
-		block.append(recordBody(node));
+		const rows = name === 'gameCapabilities' && capabilityRows(node);
+		block.append(rows?.length ? el('div', { className: 'spec-body' }, specList(rows)) : recordBody(node));
+		return block;
+	}
+	if (name === 'offerTargetTypes') {
+		const rows = targetTypeRows(items);
+		head.append(el('span', { className: 'n' }, fmt.format(new Set(items.map(t => tagText(t, 'mediaType'))).size)));
+		block.append(el('div', { className: 'spec-body' }, specList(rows)));
+		return block;
+	}
+	if (name === 'subscriptions') {
+		const rows = subscriptionRows(items);
+		head.append(el('span', { className: 'n' }, fmt.format(new Set(items.map(s => `${tagText(s, 'tiers')}/${tagText(s, 'stores')}`)).size)));
+		block.append(el('div', { className: 'spec-body' }, specList(rows)));
+		return block;
+	}
+	const rowsFor = {
+		images: () => imageRows(items, state.item, false),
+		slideShows: () => imageRows(items, state.item, true),
+		videoPreviewInstances: () => videoRows(items),
+		relatedUrls: () => relatedUrlRows(items),
+		parentProducts: () => parentRows(items, state.item),
+	}[name];
+	if (rowsFor) {
+		const rows = rowsFor();
+		head.append(el('span', { className: 'n' }, fmt.format(rows.length)));
+		const body = el('div', { className: 'spec-body' }, specList(rows));
+		// A slideshow can be a long list of screenshots, so it starts folded.
+		if (name === 'slideShows') {
+			const summary = el('summary', {}, el('span', { className: 'spec-item-name' }, rows.length === 1 ? 'Screenshot' : 'Screenshots'), icon('chevron-down'));
+			block.append(el('details', { className: 'spec-item' }, summary, body));
+		} else {
+			block.append(body);
+		}
 		return block;
 	}
 	head.append(el('span', { className: 'n' }, fmt.format(items.length)));
@@ -978,8 +1251,8 @@ function groupBlock({ name, node, items }) {
 		block.append(el('ul', { className: 'tags' }, ...items.map(category => {
 			const id = tagText(category, 'categoryId');
 			const extra = [
-				tagText(category, 'parentCategoryId') && `parent ${tagText(category, 'parentCategoryId')}`,
-				tagText(category, 'categorySystemId') && `system ${tagText(category, 'categorySystemId')}`,
+				tagText(category, 'parentCategoryId') && `Parent ${tagText(category, 'parentCategoryId')}`,
+				tagText(category, 'categorySystemId') && `System ${tagText(category, 'categorySystemId')}`,
 			].filter(Boolean).join(' · ');
 			const tag = el('li', {}, tagText(category, 'categoryName') || `Category ${id}`, id && el('span', { className: 'mono tag-id' }, id));
 			if (extra) tag.append(el('span', { className: 'visually-hidden' }, ` (${extra})`));
@@ -1002,11 +1275,37 @@ function groupBlock({ name, node, items }) {
 	return block;
 }
 
+// How it's sold, what it does and how it's filed, then its media. Parent products always come last.
+const GROUP_ORDER = [
+	'offerInstances', 'offerTargetTypes', 'subscriptions', 'ratingDescriptors', 'gameCapabilities', 'categories',
+	'images', 'slideShows', 'videoPreviewInstances', 'relatedUrls',
+];
+
 function fullRecordPanel(entry, item) {
 	const { rows, groups } = recordParts(entry);
+	// The feed gives the title ID in hex but not the effective title ID, so its hex is computed and shown beside it.
+	const effective = Array.from(entry.children).find(child => child.localName === 'effectiveTitleId')?.textContent.trim();
+	const at = rows.findIndex(([label]) => label === FIELD_LABELS.effectiveTitleId);
+	if (at !== -1 && /^\d+$/.test(effective ?? '')) {
+		rows.splice(at + 1, 0, [FIELD_LABELS.hexEffectiveTitleId, specValue('hexEffectiveTitleId', `0x${(Number(effective) >>> 0).toString(16).padStart(8, '0')}`)]);
+	}
+	// A disclaimer is only an ID and its text, so it's a row beside the content descriptors, not a group.
+	const disclaimers = groups.find(({ name }) => name === 'ratingDisclaimers');
+	if (disclaimers) {
+		groups.splice(groups.indexOf(disclaimers), 1);
+		const values = (disclaimers.items ?? [disclaimers.node]).map(d => [tagText(d, 'ratingDisclaimerText'), tagText(d, 'ratingDisclaimerId')].filter(Boolean).join(' · '));
+		const row = leafRow('ratingDisclaimers', values);
+		const after = [FIELD_LABELS.ratingDescriptors, FIELD_LABELS.ratingId].map(label => rows.findIndex(([l]) => l === label)).find(i => i !== -1);
+		if (row) rows.splice(after === undefined ? rows.length : after + 1, 0, row);
+	}
 	const sheet = el('div', { className: 'sheet' });
 	if (rows.length) sheet.append(specList(rows));
-	for (const group of groups) sheet.append(groupBlock(group));
+	// Groups follow GROUP_ORDER, and any the feed adds beyond it keep their order after them, before the parents.
+	const rank = ({ name }) => {
+		if (name === 'parentProducts') return GROUP_ORDER.length + 1;
+		return GROUP_ORDER.includes(name) ? GROUP_ORDER.indexOf(name) : GROUP_ORDER.length;
+	};
+	for (const group of groups.toSorted((a, b) => rank(a) - rank(b))) sheet.append(groupBlock(group));
 	return el('section', { className: 'section section-lead' },
 		el('div', { className: 'record-bar' },
 			el('p', { className: 'record-sub' }, 'All marketplace listing data'),
@@ -1125,7 +1424,7 @@ function renderDetail(item, outcome) {
 	els.detailFoot.hidden = false;
 	els.detailFoot.replaceChildren(
 		el('span', { className: 'pill pill-type' }, typeName(item.type)),
-		updated ? el('span', {}, icon('clock'), 'Updated ', updated) : '',
+		updated ? el('span', {}, icon('clock'), el('span', { className: 'foot-label' }, 'Updated '), updated) : '',
 	);
 	els.detailTitle.textContent = title;
 	els.detailTitle.title = title;
@@ -1150,7 +1449,21 @@ function renderDetail(item, outcome) {
 	els.detailBody.replaceChildren(...sections);
 	resetDetailScroll();
 	requestAnimationFrame(clampDescription);
+	detailFit.disconnect();
+	for (const section of sections) detailFit.observe(section);
 }
+
+// When only the panel's bottom padding overflows, the padding is trimmed so the body doesn't scroll a
+// few pixels for nothing. Sections are watched rather than the body, whose size the padding changes.
+function fitDetailBody() {
+	const body = els.detailBody;
+	body.style.paddingBottom = '';
+	const padding = parseFloat(getComputedStyle(body).paddingBottom);
+	const overflow = body.scrollHeight - body.clientHeight;
+	if (overflow > 0 && overflow < padding) body.style.paddingBottom = `${padding - overflow}px`;
+}
+const detailFit = new ResizeObserver(fitDetailBody);
+window.addEventListener('resize', fitDetailBody);
 
 // Descriptions open as a two-line preview so every item's panel stays compact; the button shows the rest.
 const DESCRIPTION_LINES = 2;
