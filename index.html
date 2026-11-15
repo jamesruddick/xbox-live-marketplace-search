@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#0f1115">
     <meta name="description" content="Search archived Xbox 360 marketplace games, add-ons, themes, gamer pictures and avatar items by Title, Title ID, Offer ID or Content ID. Built on the community-maintained Xbox Live Marketplace Archive.">
     <title>Xbox Live Marketplace Search</title>
-    <!-- Link previews (Discord, Slack, iMessage, social sites). -->
+    <!-- Link previews -->
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Xbox Live Marketplace Search">
     <meta property="og:title" content="Xbox Live Marketplace Search">
@@ -34,7 +34,7 @@
     </svg>
 
     <div id="page" class="page">
-    <!-- Header and results share a wrapper so the pinned header lets go where the results end. -->
+    <!-- Shared wrapper so the sticky header releases where the results end. -->
     <div class="page-body">
     <header class="top">
       <div class="top-inner">
@@ -68,8 +68,8 @@
           <kbd class="search-key" aria-hidden="true">/</kbd>
         </div>
       </div>
-      <!-- Phones: search and type chips sit here, and dock to the bottom of the screen once scrolled past. -->
-      <div class="dock-slot"><div class="dock"></div></div>
+      <!-- Narrow layouts: search and type chips are moved here. -->
+      <div class="phone-tools"></div>
     </header>
 
     <noscript><p class="noscript">This search runs in your browser and needs JavaScript. The raw data is in the <a href="https://github.com/jamesruddick/xbox-live-marketplace-archive">archive repository</a>.</p></noscript>
@@ -84,11 +84,11 @@
         <label class="toggle">
           <input id="content-toggle" type="checkbox" disabled>
           <span class="toggle-track" aria-hidden="true"></span>
-          <span class="toggle-label"><span class="wide-label">Only with Content ID</span><span class="narrow-label">Content ID only</span></span>
+          <span class="toggle-label"><span class="wide-label">Only with Content ID</span><span class="narrow-label">Content ID Only</span></span>
         </label>
         <div class="sort">
           <span id="sort-label" class="sort-label">Sort</span>
-          <!-- The native select holds the value (URL, history, column headers); the dropdown below is its face. -->
+          <!-- The native select holds the value; the dropdown below is its UI. -->
           <select id="sort-select" hidden disabled tabindex="-1" aria-hidden="true">
             <option value="title">A–Z</option>
             <option value="-title">Z–A</option>
@@ -143,9 +143,9 @@
           <p>A non-commercial community preservation project. Not affiliated with or endorsed by Microsoft. Xbox, Xbox 360 and Xbox Live are trademarks of the Microsoft group of companies; product names belong to their respective owners.</p>
           <nav class="foot-links" aria-label="Project links">
             <ul>
-              <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-search">View on GitHub<svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a></li>
-              <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-search/issues">Send Feedback<svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a></li>
-              <li><a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 License<svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a></li>
+              <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-search"><span><span class="foot-extra">View on </span>GitHub</span><svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a></li>
+              <li><a href="https://github.com/jamesruddick/xbox-live-marketplace-search/issues"><span><span class="foot-extra">Send </span>Feedback</span><svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a></li>
+              <li><a href="https://creativecommons.org/publicdomain/zero/1.0/"><span>CC0 <span class="foot-extra">1.0 </span>License</span><svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a></li>
             </ul>
           </nav>
         </div>
@@ -168,7 +168,7 @@
       </div>
       <div class="detail-tabs" role="tablist" aria-label="Item view">
         <button id="tab-overview" type="button" class="detail-tab" role="tab" aria-selected="true" aria-controls="detail-body">Overview</button>
-        <button id="tab-record" type="button" class="detail-tab" role="tab" aria-selected="false" aria-controls="detail-body">Full Record</button>
+        <button id="tab-record" type="button" class="detail-tab" role="tab" aria-selected="false" aria-controls="detail-body" tabindex="-1">Full Record</button>
       </div>
       <div id="detail-body" class="detail-body" role="tabpanel" aria-labelledby="tab-overview"></div>
       <p id="detail-foot" class="detail-foot" hidden></p>

@@ -3,9 +3,8 @@ const PAGE_SIZE = 100;
 
 const DEFAULT_LOCALE = 'en-us';
 
-// Every locale the Xbox 360 marketplace served. A static site can't list a folder, so the first time
-// the locale menu opens the page checks which of these have an index in the archive, and remembers
-// the answer for a day.
+// Every locale the Xbox 360 marketplace served. A static site can't list the archive, so the locale
+// menu checks which have an index on first open and caches the result for a day.
 const KNOWN_LOCALES = [
 	'am-et', 'ar-ae', 'ar-bh', 'ar-dz', 'ar-eg', 'ar-iq', 'ar-jo', 'ar-kw', 'ar-lb', 'ar-ly', 'ar-ma',
 	'ar-om', 'ar-qa', 'ar-sa', 'ar-tn', 'ar-ye', 'be-by', 'bg-bg', 'bn-bd', 'cs-cz', 'da-dk', 'de-at',
@@ -112,8 +111,8 @@ const els = {
 
 const indexCache = new Map();
 
-// Desktop scrolls inside #page so the modal's overlay covers its scrollbar; phones scroll the document.
-const desktopLayout = matchMedia('(min-width: 769px)');
+// Desktop scrolls inside #page so the modal overlay covers its scrollbar; phones scroll the document.
+const desktopLayout = matchMedia('(min-width: 861px)');
 const scroller = () => (desktopLayout.matches ? els.page : document.scrollingElement);
 let items = [];
 let byId = new Map();
@@ -122,8 +121,8 @@ let lastFocus = null;
 
 /* ---------- Loading ---------- */
 
-// Parsed indexes are kept in IndexedDB (each one is ~10 MB, too big for localStorage) so a repeat
-// visit skips both the download and the parse. Bump INDEX_FORMAT whenever buildItems changes shape.
+// Parsed indexes are cached in IndexedDB (~10 MB each, too large for localStorage).
+// Bump INDEX_FORMAT whenever buildItems changes shape.
 const DB_NAME = 'xlm-search';
 const DB_STORE = 'indexes';
 const INDEX_FORMAT = 2;
@@ -135,7 +134,7 @@ function openDb() {
 		request.onupgradeneeded = () => request.result.createObjectStore(DB_STORE);
 		request.onsuccess = () => resolve(request.result);
 		request.onerror = () => reject(request.error);
-	}).catch(() => null); // Storage blocked or unavailable (some private modes): run without the cache.
+	}).catch(() => null); // Storage unavailable: run without the cache.
 	return dbPromise;
 }
 
@@ -162,13 +161,12 @@ async function readSavedIndex(locale) {
 function saveIndex(locale, response, items) {
 	const modified = response.headers.get('last-modified');
 	const etag = response.headers.get('etag');
-	if (!modified && !etag) return; // Nothing to check freshness against later.
+	if (!modified && !etag) return; // Nothing to revalidate against.
 	withStore('readwrite', store => store.put({ format: INDEX_FORMAT, modified, etag, items }, locale))
-		.catch(() => {}); // Over quota or storage blocked: the next visit simply downloads again.
+		.catch(() => {}); // Over quota or blocked: download again next visit.
 }
 
-// Asks the server whether the index changed since it was saved. GitHub Pages' CDN nodes disagree
-// on ETags for the same file, so If-Modified-Since is preferred; the ETag covers servers without it.
+// GitHub Pages' CDN nodes disagree on ETags for the same file, so If-Modified-Since is preferred.
 function revalidation(saved) {
 	if (!saved) return {};
 	const headers = saved.modified ? { 'If-Modified-Since': saved.modified } : { 'If-None-Match': saved.etag };
@@ -181,7 +179,7 @@ async function loadItems(locale, token) {
 	try {
 		response = await fetch(indexUrl(locale), revalidation(saved));
 	} catch (error) {
-		if (saved) return saved.items; // Offline: the saved copy beats an error.
+		if (saved) return saved.items; // Offline: use the saved copy.
 		throw error;
 	}
 	if (saved && (response.status === 304 || (!response.ok && response.status !== 404))) return saved.items;
@@ -199,8 +197,7 @@ async function loadIndex(locale, response) {
 	if (response.status === 404) throw Object.assign(new Error(`The archive has no ${locale} index yet.`), { missing: true });
 	if (!response.ok) throw new Error(`The ${locale} index returned ${response.status}.`);
 
-	// Content-Length is the compressed size when the server gzips (GitHub Pages does), so it can't
-	// measure decoded bytes; show an indeterminate bar with the running size instead.
+	// With gzip, Content-Length is the compressed size, so show an indeterminate bar and the running size.
 	const encoded = (response.headers.get('content-encoding') || 'identity') !== 'identity';
 	const total = encoded ? 0 : Number(response.headers.get('content-length')) || 0;
 	els.progress.parentElement?.classList.toggle('is-indeterminate', !total);
@@ -263,7 +260,7 @@ function buildItems(rows) {
 		effectiveTitleId: col('effectivetitleid'), offerIds: col('offerid'), contentIds: col('contentid'),
 		updated: col('lastupdated'),
 	};
-	// Items with several offers or content packages list them joined by dots.
+	// Multiple offer or content IDs are joined by dots.
 	const list = value => (value ? value.split('.').filter(Boolean) : []);
 	return rows
 		.filter(r => r.length > 1 && r[c.id])
@@ -278,7 +275,7 @@ function buildItems(rows) {
 				contentIds: list(r[c.contentIds]),
 				updated: r[c.updated] || '',
 			};
-			// Leading punctuation ("! Aiko Theme", ";-) T-Shirt") should not decide the order.
+			// Ignore leading punctuation ("! Aiko Theme") when sorting.
 			item.sortTitle = item.title.toLowerCase().replace(/^[^\p{L}\p{N}]+/u, '') || '\uffff';
 			item.haystack = [item.title, item.id, item.titleId, item.effectiveTitleId, ...item.offerIds, ...item.contentIds].join('\u0001').toLowerCase();
 			return item;
@@ -305,7 +302,7 @@ function sortItems(list) {
 	return list.sort(desc ? (a, b) => sorter(b, a) : sorter);
 }
 
-// Exact title matches first, then titles starting with the query, then the rest; A–Z within each group.
+// Exact title matches, then prefix, then substring, then the rest; A–Z within each group.
 function rankByRelevance(list, query) {
 	const rank = item => {
 		const title = item.title.toLowerCase();
@@ -332,7 +329,7 @@ function update({ resetPage = true } = {}) {
 		if (!state.type || item.type === state.type) matched.push(item);
 	}
 
-	// Items are pre-sorted by title once; only re-sort for other orders.
+	// Items are pre-sorted by title; other orders re-sort.
 	if (state.sort === 'title' && terms.length) results = rankByRelevance(matched, terms.join(' '));
 	else results = state.sort === 'title' ? matched : sortItems(matched);
 
@@ -348,7 +345,7 @@ const fmt = new Intl.NumberFormat('en-US');
 
 function renderFilters(counts, total) {
 	const chips = [{ id: '', label: 'All', n: total }, ...TYPES.map(t => ({ id: t.id, label: t.label, n: counts[t.id] || 0 }))]
-		// Types with no matches are hidden, but All and the selected type always stay.
+		// Hide empty types, but always keep All and the selected type.
 		.filter(chip => chip.n > 0 || chip.id === '' || chip.id === state.type);
 	els.filters.replaceChildren(...chips.map(chip => {
 		const button = document.createElement('button');
@@ -425,11 +422,11 @@ function renderResults(terms) {
 		tr.dataset.id = item.id;
 		tr.classList.toggle('is-active', item.id === state.item);
 		const contentIds = item.contentIds.join(', ');
-		// Phones hide the Content ID column; flag the row when the match is only in it.
+		// Below 600px the Content ID is hidden; flag rows where only it matched so it can be shown.
 		if (terms.length) {
 			const visible = `${item.title}\u0001${item.titleId}`.toLowerCase();
-			const hidden = terms.filter(t => !visible.includes(t));
-			if (hidden.some(t => contentIds.toLowerCase().includes(t))) tr.dataset.match = 'content';
+			const rest = terms.filter(t => !visible.includes(t));
+			if (rest.some(t => contentIds.toLowerCase().includes(t))) tr.dataset.match = 'content';
 		}
 		const link = document.createElement('a');
 		link.className = 'row-title';
@@ -439,7 +436,8 @@ function renderResults(terms) {
 			cell('c-title', link),
 			cell('c-type', typeName(item.type)),
 			cell('mono c-id c-tid', item.titleId ? highlight(item.titleId, terms) : ''),
-			cell('mono c-id c-content', contentIds ? highlight(contentIds, terms) : ''),
+			// Wrapped so narrow layouts can render it as a chip.
+			cell('mono c-id c-content', contentIds ? el('span', { className: 'id-chip' }, highlight(contentIds, terms)) : ''),
 			cell('mono c-date', item.updated.slice(0, 10)),
 		);
 		return tr;
@@ -473,7 +471,7 @@ function showStatus(kind, message, locale) {
 			: state.type
 				? `Nothing in ${typeLabel} matches “${state.query}”.`
 				: `Nothing matches “${state.query}”. Try fewer words, or a Title ID like 0x4d5307e6.`;
-		// Only offer the ways out that would actually change the results.
+		// Only offer actions that would change the results.
 		const actions = el('div', { className: 'status-actions' });
 		const action = (label, run) => {
 			const button = el('button', { type: 'button', className: 'btn' }, label);
@@ -531,9 +529,8 @@ function formatDate(value) {
 	return value.slice(0, 10);
 }
 
-// Categories form a tree (Game Genres › Xbox LIVE Games › Role Playing) inside system 3000; other
-// systems hold unrelated tags. The genres are the tree's most specific entries, minus store collections
-// like "Xbox 360 Exclusives", and "Other" only when there's nothing better.
+// Genres are the most specific categories in system 3000's tree, excluding store collections
+// ("Xbox 360 Exclusives"), with "Other" used only when nothing else applies.
 function genreNames(entry) {
 	const categories = tagAll(entry, 'category')
 		.filter(node => tagText(node, 'categorySystemId') === '3000')
@@ -548,7 +545,7 @@ function parseRecord(xmlText) {
 	const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
 	if (doc.getElementsByTagName('parsererror').length) throw new Error('The XML record could not be read.');
 	const entry = doc.getElementsByTagNameNS('*', 'entry')[0] ?? doc;
-	// The download size lives on the offers; the largest package is the one worth showing.
+	// Size is per offer; show the largest package.
 	const packageBytes = Math.max(0, ...tagAll(entry, 'packageSize').map(node => Number(node.textContent) || 0));
 	const genres = genreNames(entry);
 	const rating = Number(tagText(entry, 'userRating'));
@@ -614,7 +611,7 @@ function idsSection(item) {
 		['Offer ID', item.offerIds],
 		['Content ID', item.contentIds],
 	].map(([label, v]) => [label, [v].flat().filter(Boolean)]).filter(([, values]) => values.length);
-	// Several offers or content packages share one label, each value keeping its own copy button.
+	// Multiple values share one label, each with its own copy button.
 	return el('section', { className: 'section' },
 		el('h3', {}, 'Identifiers'),
 		el('dl', { className: 'ids' }, ...rows.map(([label, values]) => {
@@ -630,7 +627,6 @@ function idsSection(item) {
 
 const PARENT_LABELS = { 5: 'Full Game', 19: 'Full Game', 18: 'Game', 20: 'Game', 22: 'Game', 47: 'Game' };
 
-// Five stars filled to the exact score, then the number and the vote count.
 function ratingNode({ value, count }) {
 	const stars = () => el('span', { className: 'stars-row' }, ...Array.from({ length: 5 }, () => icon('star')));
 	const fill = el('span', { className: 'stars-fill' }, stars());
@@ -651,7 +647,7 @@ const longTimestamp = new Intl.DateTimeFormat('en-GB', {
 	day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23', timeZone: 'UTC',
 });
 
-// "2014-03-17T18:37:35.987Z" → "17 Mar 2014, 18:37:35 UTC"; the archive's timestamps are all UTC.
+// "2014-03-17T18:37:35.987Z" → "17 Mar 2014, 18:37:35 UTC". Archive timestamps are UTC.
 function formatUpdated(value) {
 	if (!formatDate(value)) return '';
 	const date = new Date(/[zZ]$|[+-]\d\d:?\d\d$/.test(value) ? value : `${value.replace(' ', 'T')}Z`);
@@ -673,7 +669,7 @@ function ordinalDate(date) {
 		.join('');
 }
 
-// "2008-10-28" → "October 28th, 2008", keeping the ISO date for anyone who hovers.
+// "2008-10-28" → "October 28th, 2008", with the ISO date as a tooltip.
 function releasedNode(value) {
 	const date = new Date(`${value}T00:00:00Z`);
 	if (Number.isNaN(date.getTime())) return value;
@@ -682,11 +678,11 @@ function releasedNode(value) {
 	return node;
 }
 
-// Reads like a store listing: the full title and score, then what it is and who made it, one fact per row.
+// Overview facts, one per row, in store-listing order.
 function recordSections(record, item) {
 	const sections = [];
 	const credits = [];
-	// The header cuts long titles to one line, so the full title always leads the overview.
+	// The header truncates long titles, so the full title leads the overview.
 	const title = record.title || item.title;
 	if (title) credits.push(['Title', title]);
 	if (record.rating) credits.push(['Rating', el('span', { className: 'summary-rating' }, ratingNode(record.rating))]);
@@ -696,8 +692,7 @@ function recordSections(record, item) {
 	if (record.developer) credits.push(['Developer', record.developer]);
 	if (record.publisher) credits.push(['Publisher', record.publisher]);
 	const parentLabel = PARENT_LABELS[item.type];
-	// The parent opens by its product ID, using the index's title when it has one: the record's own
-	// copy is the squeezed "reduced" title (TigerWoodsPGATOUR® 09).
+	// Prefer the index title: the record only has the abbreviated "reduced" title.
 	const parents = parentLabel ? record.parents.filter(parent => parent.id !== item.id) : [];
 	if (parents.length) {
 		const links = parents.flatMap((parent, i) => {
@@ -709,7 +704,7 @@ function recordSections(record, item) {
 				link.title = parent.id;
 				link.addEventListener('click', () => openDetail(parent.id, { stack: true }));
 			} else {
-				// Not in this locale's index, so there is nothing to open; the ID still identifies it.
+				// Not in this locale's index, so it can't be opened.
 				link = el('span', {}, name);
 				link.title = parent.id;
 			}
@@ -718,7 +713,6 @@ function recordSections(record, item) {
 		credits.push([parentLabel, el('span', {}, ...links)]);
 	}
 	if (credits.length) {
-		// Labels in one column, values in the next, so every value starts at the same edge.
 		sections.push(el('section', { className: 'section section-lead' },
 			el('h3', { className: 'visually-hidden' }, 'About'),
 			el('dl', { className: 'summary-facts' }, ...credits.flatMap(([label, value]) => [el('dt', {}, label), el('dd', {}, value)]))));
@@ -734,9 +728,8 @@ function recordSections(record, item) {
 
 /* ---------- ESRB ---------- */
 
-// The marketplace stores ESRB ratings and content descriptors as bare numbers. The archive doesn't
-// say what they mean, so these were matched against games' ratings on esrb.org. Some descriptors have
-// two codes from different eras of the ESRB's list; codes not listed here show as their number.
+// ESRB codes are bare numbers in the archive; these mappings were matched against esrb.org.
+// Some descriptors have two codes from different eras. Unknown codes show as numbers.
 const ESRB_RATINGS = {
 	0: ['EC', 'Early Childhood'], 10: ['E', 'Everyone'], 20: ['E10+', 'Everyone 10+'], 30: ['T', 'Teen'],
 	40: ['M', 'Mature 17+'], 50: ['AO', 'Adults Only 18+'], 60: ['RP', 'Rating Pending'],
@@ -754,7 +747,7 @@ const ESRB_DESCRIPTORS = {
 	63: 'Cartoon Violence', 64: 'Mild Cartoon Violence',
 };
 
-// Other regions' stores rate with PEGI, CERO and so on, whose codes are different, so they show as numbers.
+// Other regions use PEGI, CERO etc. with different codes, so they show as numbers.
 const ESRB_LOCALES = new Set(['en-us', 'en-ca', 'fr-ca']);
 const usesEsrb = () => ESRB_LOCALES.has(state.locale);
 
@@ -767,7 +760,7 @@ const esrbDescriptor = id => (usesEsrb() && ESRB_DESCRIPTORS[id]) || '';
 
 /* ---------- Full record ---------- */
 
-// Field names are camelCase in the XML; these read better spelled out.
+// Readable labels for camelCase XML field names.
 const FIELD_LABELS = {
 	id: 'ID', hexTitleId: 'Title ID (Hex)', hexOfferId: 'Offer ID (Hex)', titleId: 'Title ID', offerId: 'Offer ID',
 	ratingId: 'Age Rating', ratingDescriptors: 'Content Descriptors', ratingDescriptor: 'Content Descriptors', ratingDisclaimers: 'Rating Disclaimers',
@@ -775,7 +768,7 @@ const FIELD_LABELS = {
 	effectiveTitleId: 'Effective Title ID', hexEffectiveTitleId: 'Effective Title ID (Hex)', parentProductId: 'Parent Product ID', pricetext: 'Price Text',
 	slideShows: 'Slideshow', videoPreviewInstances: 'Videos', relatedUrls: 'Manual',
 };
-// A repeated group's items are named after their most telling field.
+// Fields used to name items in a repeated group, in order of preference.
 const ITEM_NAME_FIELDS = ['categoryName', 'fullTitle', 'reducedTitle', 'parentReducedTitle', 'storeName', 'pricetext', 'offerId', 'fileUrl', 'relatedUrl'];
 const SKIPPED_FIELDS = new Set(['content', 'itemNum']);
 
@@ -786,7 +779,7 @@ const fieldLabel = name => FIELD_LABELS[name] ?? name
 	.replace(/ (Of|For|On|In|To|And|Per|By)(?= )/g, w => w.toLowerCase())
 	.replace(/\b(id|url|hdtv)\b/gi, w => w.toUpperCase());
 
-// IDs in the feed are written as "urn:uuid:66acd000-…"; the prefix says nothing, so it's dropped.
+// Feed IDs are prefixed "urn:uuid:"; the prefix is dropped.
 const stripUrn = text => text.replace(/^urn:uuid:/i, '');
 
 function fieldValue(name, text) {
@@ -813,16 +806,16 @@ const recordLink = (url, text) => el('a', { href: url, target: '_blank', rel: 'n
 
 function itemName(node) {
 	for (const field of ITEM_NAME_FIELDS) {
-		// Only the item's own fields: a wrapper must not borrow the name of something nested inside it.
+		// Own fields only, so a wrapper doesn't take a nested item's name.
 		const text = Array.from(node.children).find(child => child.localName === field)?.textContent.trim();
 		if (text) return /^https?:\/\//.test(text) ? fileName(text) : stripUrn(text);
 	}
-	// Nothing names it, so the row's number does the work: "01 Subscription".
+	// Unnamed: fall back to the field label ("01 Subscription").
 	return fieldLabel(node.localName);
 }
 
 const MONO_VALUE = /^(0x[0-9a-f]+|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}|-?\d+(\.\d+)?)$/i;
-// Identifiers get a copy button, as on the Overview: GUIDs and hex IDs, plus title IDs and content IDs by name.
+// Identifiers that get a copy button: GUIDs, hex IDs, and title/content IDs by field name.
 const COPY_VALUE = /^(0x[0-9a-f]+|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12})$/i;
 const COPY_FIELDS = new Set(['titleId', 'effectiveTitleId', 'contentId']);
 
@@ -850,10 +843,10 @@ function specList(rows) {
 
 const ownAttributes = node => Array.from(node.attributes).filter(a => !a.name.startsWith('xmlns') && !SKIPPED_FIELDS.has(a.localName) && a.value.trim());
 
-// A value with no child elements, e.g. <ratingDescriptor level="1.0000">23</ratingDescriptor>; its attributes follow the text.
+// A leaf element, e.g. <ratingDescriptor level="1.0000">23</ratingDescriptor>; attributes follow the text.
 function leafValue(node) {
 	const text = node.textContent.trim();
-	// Every descriptor carries level="1.0000", which says nothing; any other level is kept.
+	// level="1.0000" is on every descriptor, so only other levels are shown.
 	const attrs = ownAttributes(node).filter(a => !(node.localName === 'ratingDescriptor' && a.localName === 'level' && Number(a.value) === 1));
 	if (!attrs.length) return text ? specValue(node.localName, text) : null;
 	const notes = attrs.map(a => `${fieldLabel(a.localName)} ${/^-?\d+\.\d+$/.test(a.value) ? Number(a.value) : a.value.trim()}`);
@@ -869,8 +862,8 @@ function leafRow(name, values) {
 
 const isListOf = items => items.length > 0 && items.every(i => i.localName === items[0].localName && i.children.length);
 
-// <images><image/>…</images> lists items of one kind; anything else is a single nested object (null).
-// A lone wrapper with nothing else in it is looked through, so <slideShows><slideShow><image/>… lists the images.
+// Returns the items of a homogeneous list (<images><image/>…), or null for a single nested object.
+// A lone wrapper is looked through, so <slideShows><slideShow><image/>… lists the images.
 function listItems(node) {
 	let items = Array.from(node.children);
 	if (!isListOf(items)) return null;
@@ -878,8 +871,8 @@ function listItems(node) {
 	return items;
 }
 
-// Splits an element into plain label/value rows and nested groups, skipping empty values.
-// A group is { name, node, items }, with items null when it is a single nested object rather than a list.
+// Splits an element into label/value rows and nested groups: { name, node, items }, where items
+// is null for a single nested object.
 function recordParts(node) {
 	const rows = ownAttributes(node).map(a => [fieldLabel(a.localName), specValue(a.localName, a.value.trim())]);
 	const groups = [];
@@ -890,17 +883,17 @@ function recordParts(node) {
 		byName.get(child.localName).push(child);
 	}
 	for (const [name, nodes] of byName) {
-		// Repeated plain values (<ratingDescriptor/> ×4) become one row listing each value.
+		// Repeated leaf values become one row.
 		const row = leafRow(name, nodes.filter(n => !n.children.length).map(leafValue));
 		if (row) rows.push(row);
 		const branches = nodes.filter(n => n.children.length);
 		if (branches.length > 1) {
-			// Siblings sharing a tag (two <productInstance/> in one offer) form one list.
+			// Repeated sibling branches form one list.
 			groups.push({ name, node: null, items: branches });
 		} else if (branches.length) {
 			const [branch] = branches;
 			const kids = Array.from(branch.children);
-			// A wrapper of plain values (<tiers><tier>3</tier></tiers>) is just a value, not a group.
+			// A wrapper of leaf values (<tiers><tier>3</tier></tiers>) is a value, not a group.
 			if (!ownAttributes(branch).length && kids.every(k => !k.children.length && k.localName === kids[0].localName)) {
 				const wrapped = leafRow(name, kids.map(leafValue));
 				if (wrapped) rows.push(wrapped);
@@ -923,12 +916,12 @@ function recordBody(node) {
 
 /* ---------- Offers ---------- */
 
-// Read from the archive itself: type 1 prices carry the Microsoft Points sign (¤) and type 3 prices are
-// in dollars. Offers without a price label (all of type 2) are left out of the list.
+// Type 1 prices use the Microsoft Points sign (¤); type 3 are cash. Offers without a price
+// (all type 2) are hidden.
 const PAYMENT_TYPES = { 1: 'Microsoft Points', 3: 'Cash' };
 const priceText = text => text.trim().replace(/(\d)¤$/, '$1 Points');
 
-// Xbox 360 region flags: each byte is a territory, and some bytes split further.
+// Xbox 360 region flags: each byte is a territory, some split further.
 const REGIONS = [
 	[0x000000ff, 'North America'], [0x00000100, 'Japan'], [0x00000200, 'China'], [0x0000fc00, 'Rest of Asia'],
 	[0x00010000, 'Australia & New Zealand'], [0x00fe0000, 'Europe'], [0xff000000, 'Rest of World'],
@@ -943,7 +936,7 @@ function regionNames(value) {
 	return names.length ? names.join(', ') + (partial ? ' (and part of others)' : '') : '';
 }
 
-// Xbox Live membership tiers, and the avatar bodies an item fits (a bit each, so 3 is both).
+// Membership tiers and avatar body types (bit flags: 3 is both).
 const TIERS = { 2: 'Silver', 3: 'Gold' };
 const AVATAR_BODIES = { 1: 'Male', 2: 'Female', 3: 'Male & Female' };
 const tierNames = tiers => tiers.map(t => TIERS[t] ?? `Tier ${t}`).join(', ');
@@ -957,8 +950,7 @@ function offerSummary(offer) {
 	].filter(Boolean).join(' · ');
 }
 
-// Targets come one per media type × body × tier × store, so a game sold to Silver and Gold is two
-// near-identical entries. They're merged into one row per media type, listing who it's offered to.
+// Targets repeat per media type × body × tier × store; merge them into one row per media type.
 function targetTypeRows(items) {
 	const byMedia = new Map();
 	for (const target of items) {
@@ -985,8 +977,8 @@ function targetTypeRows(items) {
 	}).concat(stores.size === 1 ? [['Store', specValue('stores', [...stores][0])]] : []);
 }
 
-// Subscriptions are a tier and store each, often repeated, so they're merged into the tiers per store.
-// Every one in the archive has subscriptionExists 1; anything else is noted.
+// Merge subscriptions into tiers per store. subscriptionExists is always 1 in the archive;
+// other values are shown.
 function subscriptionRows(items) {
 	const byStore = new Map();
 	for (const sub of items) {
@@ -1006,37 +998,36 @@ function subscriptionRows(items) {
 
 /* ---------- Images ---------- */
 
-// The same few file names recur across the archive, so each gets a plain name.
+// Plain names for the file names that recur across the archive.
 const IMAGE_NAMES = {
 	boxartlg: 'Box Art (Large)', boxartsm: 'Box Art (Small)', banner: 'Banner', tile: 'Tile', background: 'Background',
 	thumblg: 'Thumbnail (Large)', thumbm: 'Thumbnail (Medium)', thumbsm: 'Thumbnail (Small)',
 	webboxart: 'Web Box Art', xboxboxart: 'Xbox Box Art', tvposterlg: 'TV Poster (Large)', tvpostersm: 'TV Poster (Small)',
 	providerlogo: 'Provider Logo',
 };
-// Files named by a code ("8000", "4541091480000a84") are named from their relationship type and size
-// instead, which match the named files throughout the archive (every boxartlg.jpg is 33 and 23).
+// Code-named files ("8000") are identified by relationship type and size, which match the
+// named files (every boxartlg.jpg is 33/23).
 const IMAGE_CODES = {
 	'33/23': 'Box Art (Large)', '33/30': 'Box Art (Small)', '27/15': 'Banner', '23/14': 'Tile', '25/22': 'Background',
 	'25/13': 'Background', '15/25': 'Thumbnail (Large)', '15/32': 'Thumbnail (Medium)', '15/14': 'Thumbnail (Small)',
 	'33/25': 'TV Poster (Large)', '33/45': 'TV Poster (Small)', '33/46': 'Provider Logo',
 };
-// Images are listed in this order: box art first, then dashboard art, then the rest.
+// Display order: box art, then dashboard art, then the rest.
 const IMAGE_ORDER = [...new Set(Object.values(IMAGE_NAMES))];
 const IMAGE_FORMATS = { 4: 'JPEG', 5: 'PNG' };
 
-// Parent products in the record's own order, with the title from the index when it's there.
+// Parent products, titled from the index when available.
 const parentId = node => stripUrn(tagText(node, 'parentProductId')).toLowerCase();
 const parentTitle = node => byId.get(parentId(node))?.title || tagText(node, 'parentReducedTitle') || parentId(node);
 const byParentOrder = (a, b) => (Number(tagText(a, 'parentSortOrder')) || 0) - (Number(tagText(b, 'parentSortOrder')) || 0);
 
-// One row per image: what it is, then a link to the file and its format. Images are listed in
-// IMAGE_ORDER; an add-on's images for several games are grouped by game, each one naming it.
+// One row per image, sorted by IMAGE_ORDER. Add-on images for several games are grouped by game.
 function imageRows(items, selfId, slideshow) {
 	const images = items.flatMap(n => (n.localName === 'image' ? [n] : tagAll(n, 'image')));
 	const file = image => (tagText(image, 'fileUrl') ? fileName(tagText(image, 'fileUrl')) : '');
 	const kind = image => IMAGE_NAMES[file(image).replace(/\.\w+$/, '').toLowerCase()]
 		?? IMAGE_CODES[`${tagText(image, 'relationshipType')}/${tagText(image, 'size')}`];
-	// An image for the item itself counts as its own, the same as one with no parent given.
+	// An image for the item itself counts as having no parent.
 	const parentOf = image => {
 		const id = stripUrn(tagText(image, 'parentGameMediaId')).toLowerCase();
 		return id === selfId ? '' : id;
@@ -1064,7 +1055,6 @@ function imageRows(items, selfId, slideshow) {
 	});
 }
 
-// Every preview in the archive is one SD WMV stream, but each is still described from its own fields.
 function videoRows(items) {
 	return items.map((video, i) => {
 		const links = tagAll(video, 'fileUrl').map(n => n.textContent.trim()).filter(Boolean)
@@ -1076,7 +1066,7 @@ function videoRows(items) {
 	});
 }
 
-// Related URLs are all type 3 in the archive: the game's manual, nearly always a PDF.
+// Related URLs are all type 3 (manual) in the archive.
 const RELATED_URL_TYPES = { 3: 'Manual' };
 
 function relatedUrlRows(items) {
@@ -1090,8 +1080,7 @@ function relatedUrlRows(items) {
 	});
 }
 
-// One row per parent, named by its type, opening it when it's in the index. A game lists itself as
-// its own parent, which is marked as this item rather than linked.
+// One row per parent, linked when it's in the index. A game lists itself as its own parent.
 function parentRows(items, selfId) {
 	return items.toSorted(byParentOrder).map(parent => {
 		const id = parentId(parent);
@@ -1112,12 +1101,12 @@ function parentRows(items, selfId) {
 
 /* ---------- Game capabilities ---------- */
 
-// Player counts come as Min/Max pairs and are shown as one range.
+// Min/Max player counts, shown as one range.
 const PLAYER_RANGES = [
 	['offlinePlayers', 'Offline Players'], ['offlineCoopPlayers', 'Offline Co-op'], ['offlineSystemLink', 'System Link'],
 	['onlineMultiplayer', 'Online Multiplayer'], ['onlineCoopPlayers', 'Online Co-op'],
 ];
-// 0/1 flags: what the game supports, and which modes need a hard drive.
+// 0/1 flags: supported features, and modes that need a hard drive.
 const FEATURE_FLAGS = {
 	offlineDolbyDigital: 'Dolby Digital', offlineCustomSoundtracks: 'Custom Soundtracks', offlineVoiceCommands: 'Voice Commands',
 	offlinePeripheralCamera: 'Camera', offlinePeripheralFlightStick: 'Flight Stick', offlinePeripheralArcadeStick: 'Arcade Stick',
@@ -1128,12 +1117,12 @@ const HARD_DRIVE_FLAGS = {
 	onlineHardDriveRequired: 'Online Play', onlineMultiplayerHardDriveRequired: 'Online Multiplayer',
 	onlineCoopHardDriveRequired: 'Online Co-op', offlineCoopHardDriveRequired: 'Offline Co-op',
 };
-// PC sizes carry a unit ID beside them; the values seen fit 3 = MB and 4 = GB.
+// Unit IDs observed: 3 = MB, 4 = GB.
 const SIZE_UNITS = { 3: 'MB', 4: 'GB' };
 const PC_SIZES = [
 	['pcSystemMemoryAmount', 'System Memory'], ['pcVideoMemoryAmount', 'Video Memory'], ['pcHardDriveStorageAmount', 'Hard Drive Space'],
 ];
-// The feed writes PC numbers as "2.000000000000000e+000".
+// PC values are written like "2.000000000000000e+000".
 const plainNumber = text => (Number.isFinite(Number(text)) ? fmt.format(Number(text)) : text);
 
 function capabilityRows(node) {
@@ -1147,7 +1136,7 @@ function capabilityRows(node) {
 	for (const [key, label] of PLAYER_RANGES) {
 		const min = take(`${key}Min`), max = take(`${key}Max`);
 		if (!min && !max) continue;
-		// A few records give a max below the min (e.g. min 2, max 0); only the min is shown then.
+		// Some records have max < min (e.g. 2 and 0); show the min only.
 		const low = Number(min), high = Number(max);
 		const range = !min || !max || high <= low ? (min && low ? min : max) : `${min}–${max}`;
 		rows.push([label, `${range} ${range === '1' ? 'Player' : 'Players'}`]);
@@ -1157,8 +1146,7 @@ function capabilityRows(node) {
 
 	const flagged = flags => Object.entries(flags).map(([key, label]) => [label, take(key)]).filter(([, v]) => v !== '');
 	const features = flagged(FEATURE_FLAGS);
-	// Only enabled flags are listed: some records spell out every flag as 0 and others omit the 0s,
-	// so a 0 carries no more meaning than a missing flag.
+	// Only enabled flags are listed: records inconsistently include or omit 0s.
 	const supported = features.filter(([, v]) => v === '1').map(([label]) => label);
 	const tags = labels => el('ul', { className: 'tags' }, ...labels.map(label => el('li', {}, label)));
 	if (supported.length) rows.push(['Supports', tags(supported)]);
@@ -1181,12 +1169,12 @@ function capabilityRows(node) {
 	}
 	if (take('pcNetworkRequirements') === '1') rows.push(['Network Connection', 'Required']);
 
-	// Anything not covered above is listed as it comes.
+	// List any remaining fields as-is.
 	for (const [name, text] of fields) if (text) rows.push([fieldLabel(name), specValue(name, /e[+-]\d+$/.test(text) ? plainNumber(text) : text)]);
 	return rows;
 }
 
-// Offers sorted by how they're paid, then by tier, each summarised as price, payment and tier.
+// Offers sorted by payment type, then tier.
 function offerList(items) {
 	const key = o => [tagText(o, 'paymentType'), tagText(o, 'tier')].map(v => v.padStart(3, '0')).join();
 	const sorted = [...items].sort((a, b) => key(a).localeCompare(key(b)));
@@ -1236,7 +1224,7 @@ function groupBlock({ name, node, items }) {
 		const rows = rowsFor();
 		head.append(el('span', { className: 'n' }, fmt.format(rows.length)));
 		const body = el('div', { className: 'spec-body' }, specList(rows));
-		// A slideshow can be a long list of screenshots, so it starts folded.
+		// Slideshows can be long, so they start collapsed.
 		if (name === 'slideShows') {
 			const summary = el('summary', {}, el('span', { className: 'spec-item-name' }, rows.length === 1 ? 'Screenshot' : 'Screenshots'), icon('chevron-down'));
 			block.append(el('details', { className: 'spec-item' }, summary, body));
@@ -1247,7 +1235,7 @@ function groupBlock({ name, node, items }) {
 	}
 	head.append(el('span', { className: 'n' }, fmt.format(items.length)));
 	if (name === 'categories') {
-		// Tags read better than a fold per category; the IDs ride along in muted text.
+		// Categories render as tags, with IDs in muted text.
 		block.append(el('ul', { className: 'tags' }, ...items.map(category => {
 			const id = tagText(category, 'categoryId');
 			const extra = [
@@ -1275,7 +1263,7 @@ function groupBlock({ name, node, items }) {
 	return block;
 }
 
-// How it's sold, what it does and how it's filed, then its media. Parent products always come last.
+// Group order: sales, capabilities, categories, then media. Parent products always come last.
 const GROUP_ORDER = [
 	'offerInstances', 'offerTargetTypes', 'subscriptions', 'ratingDescriptors', 'gameCapabilities', 'categories',
 	'images', 'slideShows', 'videoPreviewInstances', 'relatedUrls',
@@ -1283,13 +1271,13 @@ const GROUP_ORDER = [
 
 function fullRecordPanel(entry, item) {
 	const { rows, groups } = recordParts(entry);
-	// The feed gives the title ID in hex but not the effective title ID, so its hex is computed and shown beside it.
+	// The feed omits the effective title ID's hex, so compute it.
 	const effective = Array.from(entry.children).find(child => child.localName === 'effectiveTitleId')?.textContent.trim();
 	const at = rows.findIndex(([label]) => label === FIELD_LABELS.effectiveTitleId);
 	if (at !== -1 && /^\d+$/.test(effective ?? '')) {
 		rows.splice(at + 1, 0, [FIELD_LABELS.hexEffectiveTitleId, specValue('hexEffectiveTitleId', `0x${(Number(effective) >>> 0).toString(16).padStart(8, '0')}`)]);
 	}
-	// A disclaimer is only an ID and its text, so it's a row beside the content descriptors, not a group.
+	// Disclaimers become a row after the content descriptors rather than a group.
 	const disclaimers = groups.find(({ name }) => name === 'ratingDisclaimers');
 	if (disclaimers) {
 		groups.splice(groups.indexOf(disclaimers), 1);
@@ -1300,7 +1288,7 @@ function fullRecordPanel(entry, item) {
 	}
 	const sheet = el('div', { className: 'sheet' });
 	if (rows.length) sheet.append(specList(rows));
-	// Groups follow GROUP_ORDER, and any the feed adds beyond it keep their order after them, before the parents.
+	// Known groups follow GROUP_ORDER; unknown ones keep feed order after them, before parents.
 	const rank = ({ name }) => {
 		if (name === 'parentProducts') return GROUP_ORDER.length + 1;
 		return GROUP_ORDER.includes(name) ? GROUP_ORDER.indexOf(name) : GROUP_ORDER.length;
@@ -1326,9 +1314,8 @@ function stepDetail(delta) {
 	openDetail(next.id, { focusClose: false });
 }
 
-// While the item detail is open the page behind it must not scroll, but its scrollbar stays put
-// (hiding it would shift the layout). Wheel, touch and keyboard scrolling are only allowed
-// inside its own scroll area; anything that still moves the page is undone.
+// While the detail is open the page behind must not scroll. The scrollbar stays (hiding it shifts
+// the layout), so wheel, touch and key scrolling are confined to the detail body.
 let lockedScrollY = null;
 
 function detailCanScroll(target, deltaY) {
@@ -1347,10 +1334,10 @@ let touchY = 0;
 document.addEventListener('touchstart', event => { touchY = event.touches[0].clientY; }, { passive: true });
 document.addEventListener('touchmove', event => {
 	if (lockedScrollY === null) return;
-	// Measured per move, so a swipe that reverses direction is judged by where it's heading now.
+	// Measured per move so a reversed swipe is judged by its current direction.
 	const deltaY = touchY - event.touches[0].clientY;
 	touchY = event.touches[0].clientY;
-	// The header is dragged by hand (see below), so the browser never gets to scroll or pull-to-refresh it.
+	// Also blocks scroll and pull-to-refresh on the header, which is dragged manually.
 	if (!detailCanScroll(event.target, deltaY)) event.preventDefault();
 }, { passive: false });
 
@@ -1359,7 +1346,7 @@ document.addEventListener('keydown', event => {
 	if (lockedScrollY === null || !SCROLL_KEYS.has(event.key)) return;
 	if (event.key === ' ' && event.target.closest('button, a, input, select, summary')) return;
 	if (event.altKey) return;
-	// Scroll keys always scroll the item detail, wherever focus is inside it.
+	// Scroll keys scroll the detail body wherever focus is.
 	event.preventDefault();
 	const body = els.detailBody;
 	const page = body.clientHeight * 0.85;
@@ -1381,7 +1368,7 @@ let detailToken = 0;
 let pendingBack = false;
 const recordCache = new Map();
 
-// One request per record; neighbours are fetched ahead so Next/Previous are usually instant.
+// One request per record; neighbours are prefetched so Next/Previous are instant.
 function fetchRecord(id) {
 	const key = `${state.locale}/${id}`;
 	if (!recordCache.has(key)) {
@@ -1404,14 +1391,17 @@ function prefetchNeighbours(id) {
 
 const wait = ms => new Promise(resolve => setTimeout(() => resolve(null), ms));
 
-// The tab survives stepping between items (← →), so someone comparing raw records can step through them.
+// The selected tab persists while stepping between items.
 let detailTab = 'overview';
 let shownDetail = null;
 
 function setDetailTab(tab) {
 	detailTab = tab;
-	// Both tabs stay in the Tab order: the arrow keys already step between items, so they can't move between tabs.
-	for (const [name, button] of Object.entries(els.detailTabs)) button.setAttribute('aria-selected', String(name === tab));
+	// Roving tabindex: only the selected tab is tabbable.
+	for (const [name, button] of Object.entries(els.detailTabs)) {
+		button.setAttribute('aria-selected', String(name === tab));
+		button.tabIndex = name === tab ? 0 : -1;
+	}
 	els.detailBody.setAttribute('aria-labelledby', els.detailTabs[tab].id);
 }
 
@@ -1419,7 +1409,6 @@ function setDetailTab(tab) {
 function renderDetail(item, outcome) {
 	shownDetail = { item, outcome };
 	const title = outcome?.record?.title || item.title;
-	// What kind of item it is and when the listing last changed sit quietly at the foot of the panel.
 	const updated = formatUpdated(item.updated || (outcome?.record ? tagText(outcome.record.entry, 'updated') : ''));
 	els.detailFoot.hidden = false;
 	els.detailFoot.replaceChildren(
@@ -1428,7 +1417,6 @@ function renderDetail(item, outcome) {
 	);
 	els.detailTitle.textContent = title;
 	els.detailTitle.title = title;
-	// Overview: what it is, then the identifiers people copy. Full Record: every field in the listing.
 	let sections;
 	if (outcome?.record) {
 		sections = detailTab === 'record'
@@ -1453,8 +1441,8 @@ function renderDetail(item, outcome) {
 	for (const section of sections) detailFit.observe(section);
 }
 
-// When only the panel's bottom padding overflows, the padding is trimmed so the body doesn't scroll a
-// few pixels for nothing. Sections are watched rather than the body, whose size the padding changes.
+// Trim the bottom padding when it alone overflows, avoiding a few pixels of pointless scroll.
+// Sections are observed rather than the body, whose size the padding changes.
 function fitDetailBody() {
 	const body = els.detailBody;
 	body.style.paddingBottom = '';
@@ -1465,7 +1453,7 @@ function fitDetailBody() {
 const detailFit = new ResizeObserver(fitDetailBody);
 window.addEventListener('resize', fitDetailBody);
 
-// Descriptions open as a two-line preview so every item's panel stays compact; the button shows the rest.
+// Descriptions start clamped to two lines.
 const DESCRIPTION_LINES = 2;
 
 function clampDescription() {
@@ -1485,8 +1473,7 @@ function clampDescription() {
 	desc.after(more);
 }
 
-// Jump back to the top for each item. Briefly switching overflow off also kills any
-// momentum or smooth scroll still running from the previous item (trackpads, wheels).
+// Reset to the top. Toggling overflow also stops momentum scrolling from the previous item.
 function resetDetailScroll() {
 	const body = els.detailBody;
 	body.style.overflowY = 'hidden';
@@ -1507,7 +1494,7 @@ async function openDetail(id, { push = true, focusClose = true, stack = false } 
 	}
 	state.item = id;
 	if (push && stack && wasOpen) {
-		// An item opened straight from a shared link has no entry of its own, so it adds nothing to depth.
+		// An item opened from a shared link has no history entry of its own.
 		const depth = history.state?.detail ? history.state.depth ?? 1 : 0;
 		writeUrl('push', { detail: true, depth: depth + 1 });
 	}
@@ -1516,8 +1503,7 @@ async function openDetail(id, { push = true, focusClose = true, stack = false } 
 
 	const token = ++detailToken;
 	const pending = fetchRecord(id).then(record => ({ record }), error => ({ error }));
-	// Keep the current content on screen briefly instead of flashing a placeholder;
-	// only show the loading state if the record is genuinely slow.
+	// Keep the current content briefly rather than flashing the loading state.
 	const ready = await Promise.race([pending, wait(wasOpen ? 300 : 150)]);
 	if (token !== detailToken) return;
 	renderDetail(item, ready);
@@ -1542,14 +1528,14 @@ async function openDetail(id, { push = true, focusClose = true, stack = false } 
 }
 
 function closeDetail({ fromHistory = false } = {}) {
-	detailToken++; // also cancels an open that is still waiting for its record
+	detailToken++; // also cancels a pending open
 	if (els.detail.hidden) return;
 	const viewedId = state.item;
 	state.item = '';
 	if (!fromHistory) {
 		if (history.state?.detail) {
-			// Opening the item added a history entry; step back over it so Back does not reopen it.
-			// Anything that changes state before the step lands is re-applied in popstate.
+			// Step back over the detail's history entries so Back doesn't reopen it. State changes made
+			// before the step lands are reapplied in popstate.
 			pendingBack = true;
 			history.go(-(history.state.depth ?? 1));
 		} else writeUrl();
@@ -1563,7 +1549,7 @@ function closeDetail({ fromHistory = false } = {}) {
 		els.scrim.hidden = true;
 		els.detail.hidden = true;
 	}, 260);
-	// Return to the item last shown (Next/Previous may have moved on, even to another page).
+	// Restore focus to the last item shown, which may be on another page.
 	const link = els.body.querySelector(`tr[data-id="${CSS.escape(viewedId)}"] .row-title`);
 	const target = link ?? (lastFocus?.isConnected ? lastFocus : null);
 	target?.focus?.({ preventScroll: true, focusVisible: false });
@@ -1584,9 +1570,8 @@ function readUrl() {
 	state.contentOnly = params.get('content') === '1';
 }
 
-// Each item opened from the list, or from another item's parent link, gets its own history entry.
-// `depth` counts how many of those sit on top of the list, so closing can step back over all of them,
-// while the browser's Back returns from a parent to the item it was opened from.
+// Each item opened from the list or a parent link gets a history entry. `depth` counts them so
+// closing can step back over all of them.
 function writeUrl(mode = 'replace', entry = { detail: true, depth: 1 }) {
 	const params = new URLSearchParams();
 	if (state.locale !== DEFAULT_LOCALE) params.set('locale', state.locale);
@@ -1602,7 +1587,7 @@ function writeUrl(mode = 'replace', entry = { detail: true, depth: 1 }) {
 	else history.replaceState(history.state, '', url);
 }
 
-// The page manages its own scroll position (item history entries must not jump the list).
+// Scroll is managed manually so item history entries don't move the list.
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 
 window.addEventListener('popstate', () => {
@@ -1689,7 +1674,7 @@ els.contentToggle.addEventListener('change', () => {
 
 /* ---------- Sort dropdown ---------- */
 
-// A listbox-style dropdown that drives the hidden native select.
+// Custom listbox that drives the hidden native select.
 const SORT_OPTIONS = [
 	{ value: 'title', label: 'Title A–Z', group: 'Title' },
 	{ value: '-title', label: 'Title Z–A', group: 'Title' },
@@ -1784,13 +1769,13 @@ els.sortMenu.addEventListener('keydown', event => {
 		Tab: () => closeSortMenu({ focusTrigger: false }),
 	};
 	if (!keys[event.key]) {
-		// Type-ahead: jump to the first option starting with the typed letter.
+		// Type-ahead by first letter.
 		const i = SORT_OPTIONS.findIndex(o => o.label.toLowerCase().startsWith(event.key.toLowerCase()));
 		if (event.key.length === 1 && i !== -1) setSortActive(i);
 		return;
 	}
 	if (event.key !== 'Tab') event.preventDefault();
-	event.stopPropagation(); // keep Escape from reaching the page-level handler
+	event.stopPropagation(); // keep Escape from reaching the page handler
 	keys[event.key]();
 });
 els.sortMenu.addEventListener('click', event => {
@@ -1801,7 +1786,7 @@ els.sortMenu.addEventListener('mousemove', event => {
 	const li = event.target.closest('[role="option"]');
 	if (li && Number(li.dataset.index) !== sortActive) setSortActive(Number(li.dataset.index));
 });
-// A tap outside an open menu only closes it, like a native menu; it must not also press whatever is underneath.
+// A tap outside an open menu only closes it; it doesn't activate what's underneath.
 let swallowClick = false;
 document.addEventListener('pointerdown', event => {
 	swallowClick = false;
@@ -1847,27 +1832,25 @@ els.body.addEventListener('click', event => {
 	openDetail(tr.dataset.id);
 });
 
-// Height covered by pinned UI at the top: header + column headings on desktop. Phones pin nothing at
-// the top (the header scrolls away and search docks to the bottom), so this is just any header still showing.
+// Height of UI pinned at the top: header and column headings on desktop; on phones, any visible header.
 function pinnedHeight() {
 	if (desktopLayout.matches) return els.header.offsetHeight + els.table.tHead.offsetHeight;
 	return Math.max(0, els.header.getBoundingClientRect().bottom);
 }
 
-// Centre a row in the visible area if it is hidden behind the pinned UI or below the fold.
+// Centre a row if it's hidden behind the pinned UI or below the fold.
 function revealRow(tr) {
 	const row = tr.getBoundingClientRect();
 	const top = pinnedHeight();
-	const bottom = window.innerHeight - (docked ? dock.offsetHeight : 0);
+	const bottom = window.innerHeight;
 	if (row.top >= top && row.bottom <= bottom) return;
 	scroller().scrollBy({ top: row.top - top - (bottom - top - row.height) / 2 });
 }
 
-// After the list changes (type, sort), jump back to its top if we were scrolled down into it.
+// After the list changes, scroll back to its top if scrolled past it.
 function scrollToResults() {
 	const stuck = Math.max(els.header.getBoundingClientRect().bottom, 0);
 	const toolbar = els.main.querySelector('.toolbar').getBoundingClientRect().top;
-	// Phones scroll it flush to the top (the toolbar has its own padding) so the docked bar stays docked.
 	if (toolbar < stuck) scroller().scrollBy({ top: toolbar - stuck - (desktopLayout.matches ? 8 : 0) });
 }
 
@@ -1941,17 +1924,36 @@ els.body.addEventListener('keydown', event => {
 	const i = links.indexOf(document.activeElement);
 	if (i === -1) return;
 	event.preventDefault();
-	if (event.key === 'ArrowUp' && i === 0) els.search.focus();
-	else links[Math.min(links.length - 1, i + (event.key === 'ArrowDown' ? 1 : -1))]?.focus();
+	if (event.key === 'ArrowUp' && i === 0) { els.search.focus(); return; }
+	const next = links[Math.min(links.length - 1, i + (event.key === 'ArrowDown' ? 1 : -1))];
+	// Scroll the whole row into view, not just the link, so two-line rows aren't clipped.
+	next.focus({ preventScroll: true });
+	keepRowInView(next.closest('tr'));
 });
+
+// Scroll just enough to show the whole row below the pinned UI.
+function keepRowInView(tr) {
+	const row = tr.getBoundingClientRect();
+	const top = pinnedHeight();
+	const bottom = window.innerHeight;
+	if (row.top < top) scroller().scrollBy({ top: row.top - top });
+	else if (row.bottom > bottom) scroller().scrollBy({ top: row.bottom - bottom });
+}
 
 els.detail.addEventListener('keydown', event => {
 	if (event.key === 'Tab') {
-		const focusable = [...els.detail.querySelectorAll('button:not(:disabled), a[href]')].filter(n => n.offsetParent);
+		const focusable = [...els.detail.querySelectorAll('button:not(:disabled), a[href], summary')].filter(n => n.offsetParent && n.tabIndex >= 0);
 		const first = focusable[0];
 		const last = focusable[focusable.length - 1];
 		if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
 		else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+	} else if (event.target.closest('[role="tab"]') && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) && !event.altKey) {
+		// Arrow keys switch tabs; Alt+↑/↓ still steps between items.
+		event.preventDefault();
+		event.stopPropagation();
+		const tab = event.key === 'Home' ? 'overview' : event.key === 'End' ? 'record' : detailTab === 'overview' ? 'record' : 'overview';
+		els.detailTabs[tab].focus();
+		els.detailTabs[tab].click();
 	} else if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && !event.target.closest('input, select, textarea')) {
 		event.preventDefault();
 		stepDetail(event.key === 'ArrowRight' ? 1 : -1);
@@ -1974,88 +1976,21 @@ document.addEventListener('keydown', event => {
 	}
 });
 
-// Desktop: search sits in the header row and the type chips scroll with the results.
-// Phones: both move into the dock, which docks to the bottom of the screen once scrolled past.
+// Desktop: search in the header, type chips above the results. Narrow layouts: both below the brand row.
 const filtersWrap = document.querySelector('.filters-wrap');
 const searchBox = document.querySelector('.search');
-const dockSlot = document.querySelector('.dock-slot');
-const dock = document.querySelector('.dock');
+const phoneTools = document.querySelector('.phone-tools');
 function placeFilters() {
 	if (desktopLayout.matches) {
 		document.querySelector('.brand-row').after(searchBox);
 		els.main.prepend(filtersWrap);
-		setDocked(false);
 	} else {
-		dock.append(searchBox, filtersWrap);
-		syncDock();
+		phoneTools.append(searchBox, filtersWrap);
 	}
-}
-
-let docked = false;
-let slotHeight = 0;
-function setDocked(on) {
-	if (on === docked) return;
-	docked = on;
-	// The slot keeps the dock's height while it is out of the flow, so the page doesn't jump.
-	if (on) slotHeight = dockSlot.offsetHeight;
-	dockSlot.style.height = on ? `${slotHeight}px` : '';
-	dock.classList.toggle('is-docked', on);
-	document.documentElement.classList.toggle('has-dock', on);
-	syncDockHeight();
-}
-function syncDockHeight() {
-	document.documentElement.style.setProperty('--dock-h', docked ? `${dock.offsetHeight}px` : '0px');
-}
-// A scroll counts as the user's while a finger is on the screen, and keeps counting through the
-// momentum frames that follow; scrolls the page makes itself (a shrinking list) never do.
-let touchedAt = 0;
-let userScrolledAt = 0;
-const markTouch = () => { touchedAt = performance.now(); };
-window.addEventListener('touchmove', markTouch, { passive: true });
-window.addEventListener('touchend', markTouch, { passive: true });
-function userScrolling() {
-	const now = performance.now();
-	if (now - touchedAt < 150 || now - userScrolledAt < 150) userScrolledAt = now;
-	return userScrolledAt === now;
-}
-// Docked once the slot has scrolled off the top; stays docked while typing, so a shrinking result
-// list can't yank the focused box back up to the header mid-word. Scrolling back up by hand still
-// returns it to the header.
-function syncDock(event) {
-	if (desktopLayout.matches) return;
-	const top = dockSlot.getBoundingClientRect().top;
-	const past = top + (docked ? slotHeight : dockSlot.offsetHeight) <= 0;
-	const byUser = event?.type === 'scroll' && userScrolling();
-	setDocked(past || (docked && document.activeElement === els.search && !byUser));
-	if (!docked) return;
-	// Docked only because the box is focused, with its slot on screen (typing shrank the list to the
-	// top of the page): collapse the slot rather than show an empty gap. Restore it once scrolled past,
-	// shifting the scroll by the same amount since it grows above the viewport (unless the browser's
-	// scroll anchoring already did).
-	const want = past ? slotHeight : 0;
-	const had = dockSlot.offsetHeight;
-	if (had === want) return;
-	const y = scroller().scrollTop;
-	dockSlot.style.height = `${want}px`;
-	if (want > had && dockSlot.offsetHeight && scroller().scrollTop === y) scroller().scrollBy({ top: want - had, behavior: 'instant' });
-}
-window.addEventListener('scroll', syncDock, { passive: true });
-els.search.addEventListener('blur', () => requestAnimationFrame(syncDock));
-new ResizeObserver(syncDockHeight).observe(dock);
-// Keep the docked bar above the on-screen keyboard (iOS leaves fixed elements behind it).
-if (window.visualViewport) {
-	const syncKeyboard = () => {
-		// Pinch-zoom also shrinks the visual viewport; only a keyboard does so at scale 1.
-		const covered = visualViewport.scale > 1.01 ? 0 : window.innerHeight - visualViewport.height - visualViewport.offsetTop;
-		document.documentElement.style.setProperty('--kb', `${Math.max(0, Math.round(covered))}px`);
-	};
-	visualViewport.addEventListener('resize', syncKeyboard);
-	visualViewport.addEventListener('scroll', syncKeyboard);
 }
 placeFilters();
 
-// Desktop scrolls inside #page, phones scroll the document, so switching layouts (e.g. rotating a
-// large phone past 768px) would lose the scroll position. Track the first visible row and return to it.
+// Desktop and narrow layouts scroll different elements, so keep the first visible row across a switch.
 let anchorId = '';
 let anchorFrame = 0;
 function recordAnchor() {
@@ -2080,7 +2015,7 @@ desktopLayout.addEventListener('change', () => {
 	});
 });
 
-// Back-to-top button: appears once the list is scrolled about two screens down.
+// Back-to-top button, shown after scrolling about 1.5 screens.
 const toTop = $('to-top');
 let toTopShown = false;
 function syncToTop() {
@@ -2100,7 +2035,7 @@ window.addEventListener('scroll', syncToTop, { passive: true });
 toTop.addEventListener('click', () => {
 	const smooth = !matchMedia('(prefers-reduced-motion: reduce)').matches;
 	scroller().scrollTo({ top: 0, behavior: smooth ? 'smooth' : 'auto' });
-	// Desktop: land in the search box, ready to type. Phones skip this so the keyboard doesn't pop up.
+	// Desktop only: focus search. Skipped on phones to avoid opening the keyboard.
 	if (desktopLayout.matches) els.search.focus({ preventScroll: true });
 });
 // Keep the button clear of the desktop page scrollbar.
@@ -2108,7 +2043,7 @@ new ResizeObserver(() => {
 	document.documentElement.style.setProperty('--scrollbar-w', `${els.page.offsetWidth - els.page.clientWidth}px`);
 }).observe(els.page);
 
-// Placeholder: the full hint when the box has room for it, a short one on narrow screens.
+// Use the full placeholder when it fits.
 const PLACEHOLDER_FULL = 'Search by Title, Title ID, Offer ID or Content ID';
 const PLACEHOLDER_SHORT = 'Search Titles or IDs';
 new ResizeObserver(() => {
@@ -2185,8 +2120,8 @@ els.locale.addEventListener('change', () => {
 
 /* ---------- Locale dropdown ---------- */
 
-// Phones show just the locale code so the title keeps its room; wider screens show the full name.
-const compactLocales = matchMedia('(max-width: 768px)');
+// Narrow layouts show the locale code; wider ones the full name.
+const compactLocales = matchMedia('(max-width: 860px)');
 function labelLocales() {
 	els.localeValue.textContent = compactLocales.matches ? state.locale : localeLongName(state.locale);
 	els.localeTrigger.title = localeLongName(state.locale);
@@ -2201,7 +2136,7 @@ function renderLocales() {
 	els.locale.replaceChildren(...codes.map(code => el('option', { value: code }, code)));
 	els.locale.value = state.locale;
 	labelLocales();
-	// The search box only earns its place once the list is long.
+	// Only show the filter for long lists.
 	els.localeFilterWrap.hidden = codes.length <= 8;
 	if (!els.localeMenu.hidden) renderLocaleList();
 }
@@ -2244,6 +2179,7 @@ function renderLocaleList() {
 function setLocaleActive(index) {
 	if (!localeMatches.length) {
 		els.localeFilter.removeAttribute('aria-activedescendant');
+		els.localeList.removeAttribute('aria-activedescendant');
 		return;
 	}
 	localeActive = (index + localeMatches.length) % localeMatches.length;
@@ -2293,7 +2229,7 @@ els.localeTrigger.addEventListener('keydown', event => {
 	}
 });
 els.localeFilter.addEventListener('input', () => {
-	// The menu sizes to its names; hold that width while filtering so it doesn't shrink under the cursor.
+	// Hold the menu's width while filtering so it doesn't shrink.
 	if (!els.localeMenu.style.width) els.localeMenu.style.width = `${els.localeMenu.offsetWidth}px`;
 	renderLocaleList();
 });
@@ -2308,7 +2244,7 @@ els.localeMenu.addEventListener('keydown', event => {
 		Escape: () => closeLocaleMenu(),
 		Tab: () => closeLocaleMenu({ focusTrigger: false }),
 	};
-	// Home/End and Space belong to the search box while typing; outside it they move or choose.
+	// Outside the filter box, Home/End and Space navigate and select.
 	if (event.target !== els.localeFilter) {
 		keys.Home = () => setLocaleActive(0);
 		keys.End = () => setLocaleActive(localeMatches.length - 1);
@@ -2316,7 +2252,7 @@ els.localeMenu.addEventListener('keydown', event => {
 	}
 	if (!keys[event.key]) return;
 	if (event.key !== 'Tab') event.preventDefault();
-	event.stopPropagation(); // keep Escape and the arrows from reaching page-level handlers
+	event.stopPropagation(); // keep Escape and arrows from reaching page handlers
 	keys[event.key]();
 });
 els.localeList.addEventListener('click', event => {
@@ -2328,7 +2264,7 @@ els.localeList.addEventListener('mousemove', event => {
 	if (option && Number(option.dataset.index) !== localeActive) setLocaleActive(Number(option.dataset.index));
 });
 
-// Use a remembered result from the last day, if the browser kept one.
+// Restore the cached locale list if it's under a day old.
 function restoreLocales() {
 	try {
 		const saved = JSON.parse(localStorage.getItem(LOCALE_CACHE_KEY));
@@ -2337,7 +2273,7 @@ function restoreLocales() {
 		locales = [DEFAULT_LOCALE, ...codes];
 		localesKnown = true;
 	} catch {
-		// Storage unavailable or unreadable: check again when the menu opens.
+		// Unavailable or invalid: check again when the menu opens.
 	}
 }
 
@@ -2345,12 +2281,11 @@ function rememberLocales(codes) {
 	try {
 		localStorage.setItem(LOCALE_CACHE_KEY, JSON.stringify({ at: Date.now(), codes }));
 	} catch {
-		// Storage unavailable: the next visit simply checks again.
+		// Storage unavailable: check again next visit.
 	}
 }
 
-// Runs once per page (and only when needed). Checks a few locales at a time so the page's own
-// requests, such as item records, aren't queued behind them.
+// Runs once, on demand. Limited concurrency keeps record requests from queuing behind it.
 function discoverLocales() {
 	if (localesKnown || localeDiscovery) return localeDiscovery;
 	localeDiscovery = checkArchiveLocales();
@@ -2376,7 +2311,7 @@ async function checkArchiveLocales() {
 	const others = found.sort((a, b) => localeLongName(a).localeCompare(localeLongName(b)));
 	locales = [DEFAULT_LOCALE, ...others];
 	localesKnown = true;
-	// A check that failed (offline, server error) may have hidden a real locale, so don't keep that answer for a day.
+	// Don't cache a result with failures; it may be missing locales.
 	if (!failed) rememberLocales(others);
 	renderLocales();
 }
