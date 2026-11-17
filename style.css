@@ -370,7 +370,8 @@ button, input, select { font: inherit; color: inherit; }
 .c-title { width: auto; }
 .c-type { width: 176px; }
 .c-id { width: 128px; }
-.c-content { width: 270px; }
+/* Fits a 28-character Content ID plus a "+N" count (~254px) with room for wider monospace fonts. */
+.c-content { width: 300px; }
 .c-date { width: 118px; }
 
 .table tbody tr { cursor: pointer; transition: background 0.12s; }
@@ -380,9 +381,22 @@ button, input, select { font: inherit; color: inherit; }
 .table tbody td { border-bottom: 1px solid var(--line); }
 .table td.c-title { white-space: normal; }
 .row-title { font-weight: 550; text-decoration: none; overflow-wrap: anywhere; }
+.row-full-title { display: block; margin-top: 2px; color: var(--text-2); font-size: 0.8125rem; overflow-wrap: anywhere; }
 .row-title:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--text-3); }
 .table td.c-type { color: var(--text-2); font-size: 0.875rem; }
 .table td.mono { color: var(--text-2); }
+/* Several Content IDs: the chip truncates so the "+N" count stays visible. */
+.id-list { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; vertical-align: middle; }
+.id-list .id-chip { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.id-more {
+	flex: none;
+	padding: 0 6px;
+	border: 1px solid var(--line-strong);
+	border-radius: 999px;
+	color: var(--text-2);
+	font: 600 0.6875rem/18px var(--sans);
+	font-variant-numeric: tabular-nums;
+}
 .muted { color: var(--text-3); }
 mark { background: var(--accent-mark); color: inherit; border-radius: 2px; }
 
@@ -893,6 +907,10 @@ html.is-locked, html.is-locked body { overscroll-behavior-y: none; }
 /* A full Content chip is ~281px (17.56rem); hide it when narrower. */
 @container cid (max-width: 17.625rem) {
 	.table td.c-content .id-chip { display: none; }
+}
+/* With a "+N" count it needs ~2.5rem more; hide the pair rather than truncate the ID. */
+@container cid (max-width: 20.125rem) {
+	.table td.c-content .id-list { display: none; }
 }
 
 @media (max-width: 560px) {

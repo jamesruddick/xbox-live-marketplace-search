@@ -125,7 +125,7 @@ let lastFocus = null;
 // Bump INDEX_FORMAT whenever buildItems changes shape.
 const DB_NAME = 'xlm-search';
 const DB_STORE = 'indexes';
-const INDEX_FORMAT = 2;
+const INDEX_FORMAT = 3;
 let dbPromise = null;
 
 function openDb() {
@@ -256,7 +256,7 @@ function buildItems(rows) {
 	const header = rows.shift().map(h => h.trim().toLowerCase());
 	const col = name => header.indexOf(name);
 	const c = {
-		id: col('id'), type: col('type'), title: col('title'), titleId: col('titleid'),
+		id: col('id'), type: col('type'), title: col('title'), fullTitle: col('fulltitle'), titleId: col('titleid'),
 		effectiveTitleId: col('effectivetitleid'), offerIds: col('offerid'), contentIds: col('contentid'),
 		updated: col('lastupdated'),
 	};
@@ -269,6 +269,8 @@ function buildItems(rows) {
 				id: r[c.id],
 				type: r[c.type],
 				title: r[c.title] || '(untitled)',
+				// Optional column: the record's fullTitle, kept only when it adds something.
+				fullTitle: fullTitleOf(r[c.fullTitle], r[c.title]),
 				titleId: r[c.titleId] || '',
 				effectiveTitleId: r[c.effectiveTitleId] || '',
 				offerIds: list(r[c.offerIds]),
@@ -277,9 +279,15 @@ function buildItems(rows) {
 			};
 			// Ignore leading punctuation ("! Aiko Theme") when sorting.
 			item.sortTitle = item.title.toLowerCase().replace(/^[^\p{L}\p{N}]+/u, '') || '\uffff';
-			item.haystack = [item.title, item.id, item.titleId, item.effectiveTitleId, ...item.offerIds, ...item.contentIds].join('\u0001').toLowerCase();
+			item.haystack = [item.title, item.fullTitle, item.id, item.titleId, item.effectiveTitleId, ...item.offerIds, ...item.contentIds].join('\u0001').toLowerCase();
 			return item;
 		});
+}
+
+// Older indexes have no fulltitle column, so c.fullTitle is -1 and this returns ''.
+function fullTitleOf(full, title) {
+	full = full?.trim() ?? '';
+	return full && full.toLowerCase() !== (title || '').trim().toLowerCase() ? full : '';
 }
 
 /* ---------- Filtering ---------- */
@@ -303,14 +311,16 @@ function sortItems(list) {
 }
 
 // Exact title matches, then prefix, then substring, then the rest; A–Z within each group.
+// An item ranks by whichever of its title and full title matches best.
 function rankByRelevance(list, query) {
-	const rank = item => {
-		const title = item.title.toLowerCase();
+	const rankTitle = title => {
+		title = title.toLowerCase();
 		if (title === query) return 0;
 		if (title.startsWith(query)) return 1;
 		if (title.includes(query)) return 2;
 		return 3;
 	};
+	const rank = item => Math.min(rankTitle(item.title), item.fullTitle ? rankTitle(item.fullTitle) : 3);
 	const groups = [[], [], [], []];
 	for (const item of list) groups[rank(item)].push(item);
 	return groups.flat();
@@ -388,6 +398,17 @@ function highlight(text, terms) {
 	return frag;
 }
 
+// One Content ID (the first that matches the search, else the first) plus a count of the rest.
+function contentCell(ids, terms) {
+	if (!ids.length) return '';
+	const shown = ids.find(id => terms.some(t => id.toLowerCase().includes(t))) ?? ids[0];
+	const chip = el('span', { className: 'id-chip' }, highlight(shown, terms));
+	if (ids.length === 1) return chip;
+	const more = el('span', { className: 'id-more' }, `+${ids.length - 1}`);
+	more.setAttribute('aria-label', `and ${ids.length - 1} more`);
+	return el('span', { className: 'id-list', title: ids.join('\n') }, chip, more);
+}
+
 function cell(className, content) {
 	const td = document.createElement('td');
 	td.className = className;
@@ -422,9 +443,13 @@ function renderResults(terms) {
 		tr.dataset.id = item.id;
 		tr.classList.toggle('is-active', item.id === state.item);
 		const contentIds = item.contentIds.join(', ');
+		// Show the full title when part of the query matched only there.
+		let showFull = false;
 		// Below 600px the Content ID is hidden; flag rows where only it matched so it can be shown.
 		if (terms.length) {
-			const visible = `${item.title}\u0001${item.titleId}`.toLowerCase();
+			const title = item.title.toLowerCase();
+			showFull = !!item.fullTitle && terms.some(t => !title.includes(t) && item.fullTitle.toLowerCase().includes(t));
+			const visible = `${item.title}\u0001${showFull ? item.fullTitle : ''}\u0001${item.titleId}`.toLowerCase();
 			const rest = terms.filter(t => !visible.includes(t));
 			if (rest.some(t => contentIds.toLowerCase().includes(t))) tr.dataset.match = 'content';
 		}
@@ -433,11 +458,11 @@ function renderResults(terms) {
 		link.href = `?item=${encodeURIComponent(item.id)}`;
 		link.append(highlight(item.title, terms));
 		tr.append(
-			cell('c-title', link),
+			cell('c-title', showFull ? el('span', {}, link, el('span', { className: 'row-full-title' }, highlight(item.fullTitle, terms))) : link),
 			cell('c-type', typeName(item.type)),
 			cell('mono c-id c-tid', item.titleId ? highlight(item.titleId, terms) : ''),
 			// Wrapped so narrow layouts can render it as a chip.
-			cell('mono c-id c-content', contentIds ? el('span', { className: 'id-chip' }, highlight(contentIds, terms)) : ''),
+			cell('mono c-id c-content', contentCell(item.contentIds, terms)),
 			cell('mono c-date', item.updated.slice(0, 10)),
 		);
 		return tr;
